@@ -1,0 +1,76 @@
+name: dev env deploy
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build backend wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build web bundle
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("client/assets/config.json")
+          data = json.loads(path.read_text())
+          data["baseUrl"] = "/app/api"
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+          cd client
+          flutter pub get
+          flutter build web --base-href /app/
+          tar -czf ../web.tar.gz -C build/web .
+
+      - name: Upload deploy assets
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_HOST }}
+          username: ${{ secrets.DEV_USER }}
+          key: ${{ secrets.DEV_SSH_KEY }}
+          port: ${{ secrets.DEV_SSH_PORT }}
+          source: "dist/*.whl,web.tar.gz,deploy/dev_deploy.sh"
+          target: "/tmp/gec-tt-deploy"
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_HOST }}
+          username: ${{ secrets.DEV_USER }}
+          key: ${{ secrets.DEV_SSH_KEY }}
+          port: ${{ secrets.DEV_SSH_PORT }}
+          script: |
+            set -e
+            chmod +x /tmp/gec-tt-deploy/deploy/dev_deploy.sh
+            WHEEL_PATH=$(ls /tmp/gec-tt-deploy/dist/*.whl | head -n 1)
+            APP_VERSION="dev-${{ github.sha }}"
+            APP_GIT_SHA="${{ github.sha }}"
+            APP_USER=gec-tt-bot \
+              APP_DIR=/opt/gec_tt \
+              WEB_DIR=/var/www/gec_tt \
+              WHEEL_PATH="$WHEEL_PATH" \
+              WEB_ARCHIVE=/tmp/gec-tt-deploy/web.tar.gz \
+              APP_VERSION="$APP_VERSION" \
+              APP_GIT_SHA="$APP_GIT_SHA" \
+              /tmp/gec-tt-deploy/deploy/dev_deploy.sh

@@ -1,0 +1,23 @@
+[Unit]
+Description=gec-tt backend
+After=network.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_DIR__
+Environment=GUNICORN_WORKERS=2
+Environment=GUNICORN_TIMEOUT=120
+EnvironmentFile=__APP_DIR__/.env
+ExecStart=/bin/sh -c '__APP_DIR__/venv/bin/gunicorn \
+  -k uvicorn.workers.UvicornWorker \
+  -w ${GUNICORN_WORKERS} \
+  -b 127.0.0.1:${PORT} \
+  --timeout ${GUNICORN_TIMEOUT} \
+  backend.main:app'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

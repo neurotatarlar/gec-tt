@@ -1,0 +1,14 @@
+{
+  "baseUrl": "http://127.0.0.1:3000",
+  "appName": "Yaz.Tatar!",
+  "reportEmail": "support@example.com",
+  "reportTelegramUrl": "https://t.me/example",
+  "appIdentifiers": {
+    "android": "com.example.yaz_tatar",
+    "ios": "com.example.yaz_tatar",
+    "web": "yaz_tatar_web",
+    "macos": "com.example.yaz_tatar",
+    "windows": "com.example.yaz_tatar",
+    "linux": "com.example.yaz_tatar"
+  }
+}
