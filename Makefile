@@ -8,13 +8,19 @@ install:
 install-dev:
 	$(PYTHON) -m pip install -r requirements-dev.txt
 
-dev:
-	uvicorn backend.main:app --reload --port $${PORT:-3000}
+client-deps:
+	cd client && $(FLUTTER) pub get
+
+dev: client-deps
+	@bash -c 'set -euo pipefail; \
+	trap "kill 0" EXIT INT TERM; \
+	$(PYTHON) -m uvicorn backend.main:app --reload --port $${PORT:-3000} & \
+	cd client && $(FLUTTER) run -d web-server --web-hostname 127.0.0.1 --web-port 8080'
 
 test-backend:
 	$(PYTHON) -m pytest
 
-test-client:
+test-client: client-deps
 	cd client && $(FLUTTER) test
 
 test: test-backend test-client
@@ -24,7 +30,7 @@ lint-backend:
 	$(PYTHON) -m ruff format --check backend
 	$(PYTHON) -m mypy backend
 
-lint-client:
+lint-client: client-deps
 	cd client && $(DART) format --output=none --set-exit-if-changed lib test
 	cd client && $(FLUTTER) analyze --no-version-check
 
@@ -56,7 +62,6 @@ security: security-backend
 
 # check: lint security secrets
 check: lint security
-
 
 hooks:
 	git config core.hooksPath .githooks

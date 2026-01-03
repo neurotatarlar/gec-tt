@@ -31,6 +31,9 @@ update_env() {
 
 update_env VERSION "$APP_VERSION"
 update_env GIT_SHA "$APP_GIT_SHA"
+update_env MODEL_BACKEND "${MODEL_BACKEND:-}"
+update_env GEMINI_MODEL "${GEMINI_MODEL:-}"
+update_env GEMINI_API_KEYS "${GEMINI_API_KEYS:-}"
 
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --upgrade "$WHEEL_PATH"
 

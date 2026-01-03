@@ -9,6 +9,8 @@ import 'i18n.dart';
 import 'models.dart';
 import 'settings_store.dart';
 
+enum FeedbackChoice { none, up, down }
+
 class AppState extends ChangeNotifier {
   AppState({
     required this.config,
@@ -18,8 +20,12 @@ class AppState extends ChangeNotifier {
     required this.history,
     required Localizer localizer,
     BackendClient? backend,
+    bool? hasMoreHistory,
+    int? loadedHistoryCount,
   }) : _localizer = localizer,
-       _backend = backend ?? BackendClient(config.baseUrl);
+       _backend = backend ?? BackendClient(config.baseUrl),
+       hasMoreHistory = hasMoreHistory ?? false,
+       _loadedPersisted = loadedHistoryCount ?? history.length;
 
   final AppConfig config;
   final SettingsStore settingsStore;
@@ -36,12 +42,20 @@ class AppState extends ChangeNotifier {
   bool isStreaming = false;
   String statusText = '';
   String? errorMessage;
+  bool wasCanceled = false;
+  FeedbackChoice activeFeedback = FeedbackChoice.none;
   ExpandedPanel expandedPanel = ExpandedPanel.none;
   double splitRatio = 0.5;
+  bool isHistoryLoading = false;
+  bool hasMoreHistory;
 
-  Timer? _debounce;
   StreamSubscription<SseEvent>? _subscription;
-  String _lastRequestedText = '';
+  String activeOriginal = '';
+  DateTime? activeTimestamp;
+  int _loadedPersisted;
+  final Map<String, FeedbackChoice> _historyFeedback = {};
+
+  static const int historyPageSize = 6;
 
   String t(String key, {Map<String, String> vars = const {}}) =>
       _localizer.t(key, vars: vars);
@@ -86,51 +100,95 @@ class AppState extends ChangeNotifier {
 
   void updateOriginalText(String text) {
     originalText = text;
-    if (isStreaming) {
-      _subscription?.cancel();
-      _subscription = null;
-      isStreaming = false;
-      statusText = '';
-    }
     if (statusText.isNotEmpty) {
       statusText = '';
     }
     errorMessage = null;
     notifyListeners();
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), _startStreaming);
   }
 
   Future<void> loadHistoryItem(HistoryItem item) async {
     originalText = item.original;
-    correctedText = item.corrected;
-    isStreaming = false;
-    statusText = '';
-    requestId = item.requestId;
-    modelBackend = null;
-    errorMessage = null;
     notifyListeners();
   }
 
   Future<void> clearHistory() async {
     history = [];
     await historyStore.clear();
+    hasMoreHistory = false;
+    _loadedPersisted = 0;
+    _historyFeedback.clear();
     notifyListeners();
   }
 
-  Future<void> _startStreaming() async {
+  FeedbackChoice feedbackForItem(HistoryItem item) {
+    return _historyFeedback[item.id] ?? FeedbackChoice.none;
+  }
+
+  void toggleActiveFeedback(FeedbackChoice choice) {
+    activeFeedback = _toggleFeedback(activeFeedback, choice);
+    notifyListeners();
+  }
+
+  void toggleHistoryFeedback(String id, FeedbackChoice choice) {
+    final current = _historyFeedback[id] ?? FeedbackChoice.none;
+    final next = _toggleFeedback(current, choice);
+    if (next == FeedbackChoice.none) {
+      _historyFeedback.remove(id);
+    } else {
+      _historyFeedback[id] = next;
+    }
+    notifyListeners();
+  }
+
+  Future<void> stopStreaming() async {
+    isStreaming = false;
+    statusText = '';
+    wasCanceled = true;
+    notifyListeners();
+    await _subscription?.cancel();
+    _subscription = null;
+  }
+
+  Future<bool> loadMoreHistory() async {
+    if (isHistoryLoading || !hasMoreHistory) {
+      return false;
+    }
+    isHistoryLoading = true;
+    notifyListeners();
+    final page = await historyStore.loadPage(
+      offset: _loadedPersisted,
+      limit: historyPageSize,
+    );
+    if (page.isNotEmpty) {
+      history.addAll(page);
+      _loadedPersisted += page.length;
+    }
+    if (page.length < historyPageSize) {
+      hasMoreHistory = false;
+    }
+    isHistoryLoading = false;
+    notifyListeners();
+    return page.isNotEmpty;
+  }
+
+  Future<void> submit() async {
     final text = originalText.trim();
     if (text.isEmpty) {
-      await _subscription?.cancel();
-      _subscription = null;
-      correctedText = '';
-      statusText = '';
-      isStreaming = false;
-      errorMessage = null;
-      _lastRequestedText = '';
-      notifyListeners();
       return;
     }
+    await _startStream(text, resetTimestamp: true);
+  }
+
+  Future<void> retry() async {
+    final text = activeOriginal.trim();
+    if (text.isEmpty) {
+      return;
+    }
+    await _startStream(text, resetTimestamp: false);
+  }
+
+  Future<void> _startStream(String text, {required bool resetTimestamp}) async {
     if (config.baseUrl.isEmpty) {
       await _subscription?.cancel();
       _subscription = null;
@@ -140,18 +198,21 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (text == _lastRequestedText) {
-      return;
-    }
-    _lastRequestedText = text;
     await _subscription?.cancel();
 
+    activeOriginal = text;
+    activeTimestamp = resetTimestamp
+        ? DateTime.now()
+        : (activeTimestamp ?? DateTime.now());
+    originalText = resetTimestamp ? '' : originalText;
     correctedText = '';
     requestId = null;
     statusText = t('status.correcting');
     errorMessage = null;
     modelBackend = null;
     isStreaming = true;
+    wasCanceled = false;
+    activeFeedback = FeedbackChoice.none;
     notifyListeners();
 
     _subscription = _backend
@@ -176,12 +237,14 @@ class AppState extends ChangeNotifier {
       final latency = rawLatency is int
           ? rawLatency
           : int.tryParse(rawLatency?.toString() ?? '') ?? 0;
+      wasCanceled = false;
       _finishStream(latency: latency);
     }
     if (event.event == 'error') {
       errorMessage = event.data['message']?.toString() ?? t('errors.stream');
       statusText = t('status.error');
       isStreaming = false;
+      wasCanceled = false;
       notifyListeners();
     }
   }
@@ -190,38 +253,52 @@ class AppState extends ChangeNotifier {
     errorMessage = error.toString();
     statusText = t('status.error');
     isStreaming = false;
+    wasCanceled = false;
     notifyListeners();
   }
 
   void _handleDone() {
     if (isStreaming) {
+      wasCanceled = false;
       _finishStream(latency: 0);
     }
   }
 
   Future<void> _finishStream({required int latency}) async {
     isStreaming = false;
-    statusText = t('status.done');
+    statusText = '';
     notifyListeners();
 
+    final timestamp = activeTimestamp ?? DateTime.now();
+    final item = HistoryItem(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      original: activeOriginal,
+      corrected: correctedText,
+      timestamp: timestamp,
+      latencyMs: latency,
+      requestId: requestId ?? '',
+    );
+    history.insert(0, item);
     if (settings.saveHistory) {
-      final item = HistoryItem(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        original: originalText,
-        corrected: correctedText,
-        timestamp: DateTime.now(),
-        latencyMs: latency,
-        requestId: requestId ?? '',
-      );
-      history.insert(0, item);
       await historyStore.add(item);
-      notifyListeners();
+      _loadedPersisted += 1;
     }
+    activeOriginal = '';
+    activeTimestamp = null;
+    correctedText = '';
+    activeFeedback = FeedbackChoice.none;
+    notifyListeners();
+  }
+
+  FeedbackChoice _toggleFeedback(FeedbackChoice current, FeedbackChoice next) {
+    if (current == next) {
+      return FeedbackChoice.none;
+    }
+    return next;
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _subscription?.cancel();
     super.dispose();
   }
@@ -232,7 +309,12 @@ Future<AppState> bootstrapAppState() async {
   final settingsStore = SettingsStore();
   final historyStore = HistoryStore();
   final settings = await settingsStore.load();
-  final history = await historyStore.loadAll();
+  final history = await historyStore.loadPage(
+    offset: 0,
+    limit: AppState.historyPageSize,
+  );
+  final totalHistory = await historyStore.count();
+  final hasMoreHistory = history.length < totalHistory;
   final localizer = Localizer();
   await localizer.load(settings.language);
 
@@ -242,6 +324,8 @@ Future<AppState> bootstrapAppState() async {
     historyStore: historyStore,
     settings: settings,
     history: history,
+    hasMoreHistory: hasMoreHistory,
+    loadedHistoryCount: history.length,
     localizer: localizer,
   );
 }

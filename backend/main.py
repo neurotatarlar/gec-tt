@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 from .cache import SimpleCache
+from .gemini import GeminiAdapter, GeminiKeyExhausted
 from .metrics import (
     CACHE_HITS,
     METRICS_CONTENT_TYPE,
@@ -32,6 +34,10 @@ class AppState:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.adapter: ModelAdapter = build_adapter(settings)
+        logger = logging.getLogger("backend")
+        logger.info("Model adapter: %s", self.adapter.name)
+        if hasattr(self.adapter, "_model"):
+            logger.info("Gemini model: %s", self.adapter._model)
         self.cache = SimpleCache(settings.cache_ttl_ms)
         self.rates = SlidingLimiter(settings.rate_limit_per_minute, settings.rate_limit_per_day)
         self.streams: dict[str, int] = {}
@@ -136,6 +142,14 @@ async def correct(request: Request, state: AppState = Depends(get_state)):
 
     try:
         corrected = await state.adapter.correct(text, lang, rid)
+    except GeminiKeyExhausted as err:
+        state.total_rate_limited += 1
+        REQUESTS_TOTAL.labels(endpoint="correct", outcome="rate_limited").inc()
+        REQUEST_LATENCY.labels(endpoint="correct").observe(time.time() - started)
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "rate_limited", "message": str(err)},
+        ) from err
     except Exception as err:  # noqa: BLE001
         state.total_errors += 1
         REQUESTS_TOTAL.labels(endpoint="correct", outcome="error").inc()
@@ -200,15 +214,44 @@ async def correct_stream(request: Request, state: AppState = Depends(get_state))
         STREAMS_TOTAL.labels(outcome=outcome).inc()
         STREAM_DURATION.observe(time.time() - started)
 
+    stream_iter = state.adapter.correct_stream(text, lang, rid)
+    first_delta: str | None = None
+    stream_finished = False
+    if isinstance(state.adapter, GeminiAdapter):
+        try:
+            first_delta = await stream_iter.__anext__()
+        except StopAsyncIteration:
+            stream_finished = True
+        except GeminiKeyExhausted as err:
+            state.total_rate_limited += 1
+            REQUESTS_TOTAL.labels(endpoint="stream", outcome="rate_limited").inc()
+            record_stream_outcome("rate_limited")
+            state.streams[ip] = max(0, state.streams.get(ip, 1) - 1)
+            STREAMS_ACTIVE.dec()
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "rate_limited", "message": str(err)},
+            ) from err
+
     async def event_stream() -> AsyncGenerator[str, None]:
         interval = state.settings.heartbeat_ms / 1000
         corrected = ""
-        stream_iter = state.adapter.correct_stream(text, lang, rid)
+        pending_delta = first_delta
         try:
             yield sse_event("meta", {"request_id": rid, "model_backend": state.adapter.name})
+            if stream_finished:
+                latency = int((time.time() - started) * 1000)
+                yield sse_event("done", {"request_id": rid, "latency_ms": latency})
+                state.total_streams_done += 1
+                record_stream_outcome("ok")
+                return
             while True:
                 try:
-                    delta = await asyncio.wait_for(stream_iter.__anext__(), timeout=interval)
+                    if pending_delta is not None:
+                        delta = pending_delta
+                        pending_delta = None
+                    else:
+                        delta = await asyncio.wait_for(stream_iter.__anext__(), timeout=interval)
                     corrected += delta
                     yield sse_event("delta", {"request_id": rid, "text": delta})
                 except TimeoutError:
@@ -221,6 +264,14 @@ async def correct_stream(request: Request, state: AppState = Depends(get_state))
                     state.total_streams_done += 1
                     record_stream_outcome("ok")
                     break
+        except GeminiKeyExhausted as err:
+            yield sse_event(
+                "error",
+                {"request_id": rid, "type": "rate_limited", "message": str(err)},
+            )
+            state.total_rate_limited += 1
+            record_stream_outcome("rate_limited")
+            state.total_streams_error += 1
         except asyncio.CancelledError:
             yield sse_event(
                 "error", {"request_id": rid, "type": "cancelled", "message": "client_disconnected"}

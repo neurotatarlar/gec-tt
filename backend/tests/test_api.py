@@ -13,6 +13,8 @@ from backend.settings import Settings
 
 
 def setup_state(**overrides):
+    if "model_backend" not in overrides:
+        overrides["model_backend"] = "mock"
     settings = Settings(**overrides)
     app.state.app_state = AppState(settings)
     return app

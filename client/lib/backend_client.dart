@@ -10,6 +10,15 @@ class BackendClient {
 
   final String baseUrl;
 
+  Uri _endpoint(String path) {
+    final base = Uri.parse(baseUrl);
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
+    final fullPath = basePath.isEmpty ? path : '$basePath$path';
+    return base.replace(path: fullPath);
+  }
+
   Stream<SseEvent> streamCorrect({
     required String text,
     required String lang,
@@ -22,7 +31,7 @@ class BackendClient {
     controller
       ..onListen = () async {
         try {
-          final uri = Uri.parse(baseUrl).resolve('/v1/correct/stream');
+          final uri = _endpoint('/v1/correct/stream');
           final request = http.Request('POST', uri);
           request.headers['Content-Type'] = 'application/json';
           request.headers['Accept'] = 'text/event-stream';
@@ -34,7 +43,10 @@ class BackendClient {
 
           final response = await client.send(request);
           if (response.statusCode != 200) {
-            throw Exception('stream_failed:${response.statusCode}');
+            final body = await response.stream.bytesToString();
+            final message = _extractErrorMessage(body, response.statusCode);
+            client.close();
+            throw Exception(message);
           }
 
           var buffer = '';
@@ -73,15 +85,23 @@ class BackendClient {
                     }
                   }
                 },
-                onDone: controller.close,
+                onDone: () {
+                  if (!controller.isClosed) {
+                    controller.close();
+                  }
+                },
                 onError: (Object err, StackTrace stack) {
-                  controller.addError(err, stack);
+                  if (!controller.isClosed) {
+                    controller.addError(err, stack);
+                  }
                 },
               );
         } on Object catch (err, stack) {
           client.close();
-          controller.addError(err, stack);
-          await controller.close();
+          if (!controller.isClosed) {
+            controller.addError(err, stack);
+            await controller.close();
+          }
         }
       }
       ..onCancel = () async {
@@ -94,4 +114,29 @@ class BackendClient {
 
     return controller.stream;
   }
+}
+
+String _extractErrorMessage(String body, int statusCode) {
+  if (body.isNotEmpty) {
+    try {
+      final payload = jsonDecode(body);
+      if (payload is Map<String, dynamic>) {
+        final detail = payload['detail'];
+        if (detail is Map<String, dynamic>) {
+          final message = detail['message'];
+          if (message != null) {
+            return message.toString();
+          }
+          final error = detail['error'];
+          if (error != null) {
+            return error.toString();
+          }
+        }
+        if (detail is String) {
+          return detail;
+        }
+      }
+    } catch (_) {}
+  }
+  return 'stream_failed:$statusCode';
 }

@@ -15,17 +15,42 @@ class HistoryStore {
 
   Future<List<HistoryItem>> loadAll() async {
     await _ensureInit();
-    final box = Hive.box<Map<String, dynamic>>(_boxName);
-    return box.values
-        .whereType<Map<String, dynamic>>()
-        .map(HistoryItem.fromJson)
-        .toList();
+    final total = await count();
+    return loadPage(offset: 0, limit: total);
   }
 
   Future<void> add(HistoryItem item) async {
     await _ensureInit();
     final box = Hive.box<Map<String, dynamic>>(_boxName);
     await box.add(item.toJson());
+  }
+
+  Future<int> count() async {
+    await _ensureInit();
+    final box = Hive.box<Map<String, dynamic>>(_boxName);
+    return box.length;
+  }
+
+  Future<List<HistoryItem>> loadPage({
+    required int offset,
+    required int limit,
+  }) async {
+    await _ensureInit();
+    if (limit <= 0) {
+      return [];
+    }
+    final box = Hive.box<Map<String, dynamic>>(_boxName);
+    final values = box.values.toList(growable: false);
+    final total = values.length;
+    if (total == 0 || offset >= total) {
+      return [];
+    }
+    final start = (total - offset - limit).clamp(0, total);
+    final end = (total - offset).clamp(0, total);
+    final slice = values.sublist(start, end).reversed;
+    return slice
+        .map((value) => HistoryItem.fromJson(Map<String, dynamic>.from(value)))
+        .toList();
   }
 
   Future<void> clear() async {

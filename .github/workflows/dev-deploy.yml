@@ -55,6 +55,10 @@ jobs:
 
       - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODEL: gemini-3-flash-preview
+          MODEL_BACKEND: gemini
         with:
           host: ${{ secrets.DEV_HOST }}
           username: ${{ secrets.DEV_USER }}
@@ -73,4 +77,7 @@ jobs:
               WEB_ARCHIVE=/tmp/gec-tt-deploy/web.tar.gz \
               APP_VERSION="$APP_VERSION" \
               APP_GIT_SHA="$APP_GIT_SHA" \
+              MODEL_BACKEND="$MODEL_BACKEND" \
+              GEMINI_MODEL="$GEMINI_MODEL" \
+              GEMINI_API_KEYS="$GEMINI_API_KEYS" \
               /tmp/gec-tt-deploy/deploy/dev_deploy.sh

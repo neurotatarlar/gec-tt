@@ -46,6 +46,7 @@ Set these in repo settings:
 - `DEV_USER`: `gec-tt-bot`
 - `DEV_SSH_KEY`: private key contents
 - `DEV_SSH_PORT`: `22` (or your custom port)
+- `GEMINI_API_KEYS`: comma-separated Gemini API keys (for demo proxy)
 
 ## Nginx routing
 The init workflow injects a snippet into the existing nginx site file to serve:

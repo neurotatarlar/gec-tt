@@ -1,10 +1,39 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app_state.dart';
-import 'models.dart';
+
+const _seedColor = Color(0xFF4C6A5C);
+const _surfaceLight = Color(0xFFFBFAF7);
+const _canvasLight = Color(0xFFF1EEE7);
+const _mutedLight = Color(0xFF8A8578);
+const _borderLight = Color(0xFFE2DDD3);
+const _originalLight = Color(0xFFF6F4EE);
+const _correctedLight = Color(0xFFEFF4EF);
+
+const _surfaceDark = Color(0xFF1C1F1C);
+const _canvasDark = Color(0xFF121412);
+const _borderDark = Color(0xFF2C322D);
+const _originalDark = Color(0xFF1D201E);
+const _correctedDark = Color(0xFF1F2A23);
+
+double _sidePadding(BuildContext context) {
+  final width = MediaQuery.of(context).size.width;
+  if (width <= 900) {
+    return 20;
+  }
+  return (width - 900) / 2;
+}
+
+class _FocusComposerIntent extends Intent {
+  const _FocusComposerIntent();
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,29 +56,79 @@ class MyApp extends StatelessWidget {
             title: state.config.appName,
             debugShowCheckedModeBanner: false,
             themeMode: state.settings.themeMode,
-            theme: ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: const Color(0xFFC19A42),
-              ),
-              textTheme: Theme.of(
-                context,
-              ).textTheme.apply(fontSizeFactor: state.settings.fontScale),
-            ),
-            darkTheme: ThemeData(
-              brightness: Brightness.dark,
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: const Color(0xFFC19A42),
-                brightness: Brightness.dark,
-              ),
-              textTheme: Theme.of(
-                context,
-              ).textTheme.apply(fontSizeFactor: state.settings.fontScale),
-            ),
+            theme: _buildTheme(state, Brightness.light),
+            darkTheme: _buildTheme(state, Brightness.dark),
+            builder: (context, child) {
+              final media = MediaQuery.of(context);
+              final baseScale = media.textScaler.scale(1);
+              return MediaQuery(
+                data: media.copyWith(
+                  textScaler: TextScaler.linear(
+                    baseScale * state.settings.fontScale,
+                  ),
+                ),
+                child: child ?? const SizedBox.shrink(),
+              );
+            },
             home: const HomePage(),
           );
         },
+      ),
+    );
+  }
+
+  ThemeData _buildTheme(AppState state, Brightness brightness) {
+    final base = ThemeData(
+      brightness: brightness,
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: _seedColor,
+        brightness: brightness,
+      ),
+      scaffoldBackgroundColor: brightness == Brightness.dark
+          ? _canvasDark
+          : _canvasLight,
+      cardColor: brightness == Brightness.dark ? _surfaceDark : _surfaceLight,
+      dividerColor: brightness == Brightness.dark ? _borderDark : _borderLight,
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: brightness == Brightness.dark ? _surfaceDark : _surfaceLight,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(
+            color: brightness == Brightness.dark ? _borderDark : _borderLight,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(
+            color: brightness == Brightness.dark ? _borderDark : _borderLight,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: _seedColor, width: 1.2),
+        ),
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    final textTheme = GoogleFonts.manropeTextTheme(base.textTheme);
+    final headingTheme = GoogleFonts.frauncesTextTheme(textTheme);
+
+    return base.copyWith(
+      textTheme: textTheme.copyWith(
+        displayLarge: headingTheme.displayLarge,
+        displayMedium: headingTheme.displayMedium,
+        displaySmall: headingTheme.displaySmall,
+        headlineLarge: headingTheme.headlineLarge,
+        headlineMedium: headingTheme.headlineMedium,
+        headlineSmall: headingTheme.headlineSmall,
+        titleLarge: headingTheme.titleLarge,
+        titleMedium: headingTheme.titleMedium,
+        titleSmall: headingTheme.titleSmall,
       ),
     );
   }
@@ -63,52 +142,201 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final TextEditingController _originalController = TextEditingController();
-  final ScrollController _correctedScroll = ScrollController();
+  final TextEditingController _inputController = TextEditingController();
+  final ScrollController _feedController = ScrollController();
+  final FocusNode _inputFocusNode = FocusNode();
+  DateTime _lastInteraction = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _allowBlur = false;
+  bool _isFillingHistory = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _feedController.addListener(_handleScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+      _fillHistoryToViewport();
+      _focusComposer();
+    });
+    _inputFocusNode.addListener(_handleInputFocusChange);
+  }
 
   @override
   void dispose() {
-    _originalController.dispose();
-    _correctedScroll.dispose();
+    _inputController.dispose();
+    _feedController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    _inputFocusNode
+      ..removeListener(_handleInputFocusChange)
+      ..dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    _syncOriginalController(state);
+    _syncInputController(state);
 
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            _TopBar(state: state),
-            _LayoutControls(state: state),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _SplitPanels(
-                  state: state,
-                  originalController: _originalController,
-                  correctedScroll: _correctedScroll,
-                ),
+    return Listener(
+      onPointerDown: _handlePointerDown,
+      child: Shortcuts(
+        shortcuts: <LogicalKeySet, Intent>{
+          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK):
+              const _FocusComposerIntent(),
+          LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyK):
+              const _FocusComposerIntent(),
+        },
+        child: Actions(
+          actions: {
+            _FocusComposerIntent: CallbackAction<_FocusComposerIntent>(
+              onInvoke: (_) {
+                _inputFocusNode.requestFocus();
+                return null;
+              },
+            ),
+          },
+          child: Scaffold(
+            body: SafeArea(
+              child: Column(
+                children: [
+                  _TopBar(state: state),
+                  Expanded(
+                    child: _FeedList(state: state, controller: _feedController),
+                  ),
+                  _Composer(
+                    state: state,
+                    controller: _inputController,
+                    focusNode: _inputFocusNode,
+                    onIntentionalBlur: _markIntentionalBlur,
+                  ),
+                  _FooterActions(state: state),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            _BottomBar(state: state),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  void _syncOriginalController(AppState state) {
-    if (_originalController.text != state.originalText) {
-      _originalController.text = state.originalText;
-      _originalController.selection = TextSelection.fromPosition(
-        TextPosition(offset: _originalController.text.length),
+  void _syncInputController(AppState state) {
+    if (_inputController.text != state.originalText) {
+      _inputController.text = state.originalText;
+      _inputController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _inputController.text.length),
       );
     }
+  }
+
+  void _scrollToBottom() {
+    if (!_feedController.hasClients) {
+      return;
+    }
+    _feedController.jumpTo(_feedController.position.minScrollExtent);
+  }
+
+  void _focusComposer() {
+    if (_inputFocusNode.hasFocus) {
+      return;
+    }
+    if (FocusManager.instance.primaryFocus != null) {
+      return;
+    }
+    _inputFocusNode.requestFocus();
+  }
+
+  void _handleScroll() {
+    if (!_feedController.hasClients) {
+      return;
+    }
+    final position = _feedController.position;
+    if (position.maxScrollExtent == 0) {
+      return;
+    }
+    if (position.pixels >= position.maxScrollExtent - 120) {
+      final state = context.read<AppState>();
+      if (!state.isHistoryLoading && state.hasMoreHistory) {
+        state.loadMoreHistory().then((loaded) {
+          if (loaded) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _fillHistoryToViewport();
+              }
+            });
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _fillHistoryToViewport() async {
+    if (_isFillingHistory) {
+      return;
+    }
+    _isFillingHistory = true;
+    final state = context.read<AppState>();
+    while (mounted) {
+      if (!_feedController.hasClients) {
+        break;
+      }
+      if (state.isHistoryLoading || !state.hasMoreHistory) {
+        break;
+      }
+      final maxExtent = _feedController.position.maxScrollExtent;
+      if (maxExtent > 80) {
+        break;
+      }
+      final loaded = await state.loadMoreHistory();
+      if (!mounted) {
+        break;
+      }
+      if (!loaded) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) {
+        break;
+      }
+    }
+    _isFillingHistory = false;
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _lastInteraction = DateTime.now();
+    _allowBlur = true;
+  }
+
+  void _markIntentionalBlur() {
+    _lastInteraction = DateTime.now();
+    _allowBlur = true;
+  }
+
+  void _handleInputFocusChange() {
+    if (_inputFocusNode.hasFocus) {
+      _allowBlur = false;
+      return;
+    }
+    final sinceInteraction = DateTime.now()
+        .difference(_lastInteraction)
+        .inMilliseconds;
+    if (_allowBlur && sinceInteraction < 800) {
+      _allowBlur = false;
+      return;
+    }
+    _restoreInputFocus();
+  }
+
+  void _restoreInputFocus() {
+    Future<void>.delayed(const Duration(milliseconds: 80), () {
+      if (!mounted) {
+        return;
+      }
+      if (_inputFocusNode.hasFocus) {
+        return;
+      }
+      _inputFocusNode.requestFocus();
+    });
   }
 }
 
@@ -119,19 +347,22 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600);
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: _sidePadding(context),
+        vertical: 12,
+      ),
       child: Row(
         children: [
-          Text(
-            state.config.appName,
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-          ),
+          Text(state.config.appName, style: titleStyle),
           const Spacer(),
           DropdownButton<String>(
             value: state.settings.language,
+            underline: const SizedBox.shrink(),
             items: [
               DropdownMenuItem(
                 value: 'en',
@@ -152,419 +383,17 @@ class _TopBar extends StatelessWidget {
             },
           ),
           const SizedBox(width: 8),
+          TextButton(
+            onPressed: () => _openHistory(context, state),
+            child: Text(state.t('history.title')),
+          ),
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_outlined),
             onPressed: () => showModalBottomSheet<void>(
               context: context,
               showDragHandle: true,
               builder: (_) => _SettingsSheet(state: state),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LayoutControls extends StatelessWidget {
-  const _LayoutControls({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _IconToggle(
-            icon: Icons.view_column,
-            active: state.settings.layoutMode == LayoutMode.horizontal,
-            onPressed: () => state.setLayout(LayoutMode.horizontal),
-          ),
-          const SizedBox(width: 10),
-          _IconToggle(
-            icon: Icons.view_agenda,
-            active: state.settings.layoutMode == LayoutMode.vertical,
-            onPressed: () => state.setLayout(LayoutMode.vertical),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IconToggle extends StatelessWidget {
-  const _IconToggle({
-    required this.icon,
-    required this.active,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final bool active;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: active ? Colors.black87 : Colors.black26),
-        ),
-        child: Icon(icon, size: 20),
-      ),
-    );
-  }
-}
-
-class _SplitPanels extends StatelessWidget {
-  const _SplitPanels({
-    required this.state,
-    required this.originalController,
-    required this.correctedScroll,
-  });
-
-  final AppState state;
-  final TextEditingController originalController;
-  final ScrollController correctedScroll;
-
-  @override
-  Widget build(BuildContext context) {
-    if (state.expandedPanel != ExpandedPanel.none) {
-      return _ExpandedPanelView(
-        state: state,
-        originalController: originalController,
-        correctedScroll: correctedScroll,
-      );
-    }
-
-    final isVertical = state.settings.layoutMode == LayoutMode.vertical;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final totalExtent = isVertical
-            ? constraints.maxHeight
-            : constraints.maxWidth;
-        final firstFlex = (state.splitRatio * 1000).round();
-        final secondFlex = 1000 - firstFlex;
-        final children = <Widget>[
-          Expanded(
-            flex: firstFlex,
-            child: _OriginalPanel(state: state, controller: originalController),
-          ),
-          _SplitDivider(
-            isVertical: isVertical,
-            state: state,
-            totalExtent: totalExtent,
-          ),
-          Expanded(
-            flex: secondFlex,
-            child: _CorrectedPanel(
-              state: state,
-              scrollController: correctedScroll,
-            ),
-          ),
-        ];
-        return isVertical
-            ? Column(children: children)
-            : Row(children: children);
-      },
-    );
-  }
-}
-
-class _ExpandedPanelView extends StatelessWidget {
-  const _ExpandedPanelView({
-    required this.state,
-    required this.originalController,
-    required this.correctedScroll,
-  });
-
-  final AppState state;
-  final TextEditingController originalController;
-  final ScrollController correctedScroll;
-
-  @override
-  Widget build(BuildContext context) {
-    final panel = state.expandedPanel == ExpandedPanel.original
-        ? _OriginalPanel(state: state, controller: originalController)
-        : _CorrectedPanel(state: state, scrollController: correctedScroll);
-    return Column(children: [Expanded(child: panel)]);
-  }
-}
-
-class _SplitDivider extends StatelessWidget {
-  const _SplitDivider({
-    required this.isVertical,
-    required this.state,
-    required this.totalExtent,
-  });
-
-  final bool isVertical;
-  final AppState state;
-  final double totalExtent;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: isVertical
-          ? SystemMouseCursors.resizeRow
-          : SystemMouseCursors.resizeColumn,
-      child: GestureDetector(
-        onHorizontalDragUpdate: isVertical
-            ? null
-            : (details) {
-                final extent = totalExtent <= 0 ? 1 : totalExtent;
-                final ratioDelta = details.delta.dx / extent;
-                state.setSplitRatio(state.splitRatio + ratioDelta);
-              },
-        onVerticalDragUpdate: isVertical
-            ? (details) {
-                final extent = totalExtent <= 0 ? 1 : totalExtent;
-                final ratioDelta = details.delta.dy / extent;
-                state.setSplitRatio(state.splitRatio + ratioDelta);
-              }
-            : null,
-        child: Container(
-          width: isVertical ? double.infinity : 10,
-          height: isVertical ? 10 : double.infinity,
-          margin: isVertical
-              ? const EdgeInsets.symmetric(vertical: 6)
-              : const EdgeInsets.symmetric(horizontal: 6),
-          decoration: BoxDecoration(
-            color: Theme.of(context).dividerColor,
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OriginalPanel extends StatelessWidget {
-  const _OriginalPanel({required this.state, required this.controller});
-
-  final AppState state;
-  final TextEditingController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return _PanelShell(
-      title: '',
-      actions: [
-        IconButton(
-          icon: Icon(
-            state.expandedPanel == ExpandedPanel.original
-                ? Icons.close_fullscreen
-                : Icons.open_in_full,
-          ),
-          onPressed: () => state.toggleExpand(ExpandedPanel.original),
-        ),
-        IconButton(
-          icon: const Icon(Icons.copy),
-          onPressed: () => _copyToClipboard(context, state, controller.text),
-        ),
-      ],
-      child: TextField(
-        controller: controller,
-        expands: true,
-        maxLines: null,
-        onChanged: state.updateOriginalText,
-        decoration: const InputDecoration(border: InputBorder.none),
-      ),
-    );
-  }
-}
-
-class _CorrectedPanel extends StatefulWidget {
-  const _CorrectedPanel({required this.state, required this.scrollController});
-
-  final AppState state;
-  final ScrollController scrollController;
-
-  @override
-  State<_CorrectedPanel> createState() => _CorrectedPanelState();
-}
-
-class _CorrectedPanelState extends State<_CorrectedPanel> {
-  @override
-  void didUpdateWidget(covariant _CorrectedPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _autoScroll();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = widget.state;
-    return _PanelShell(
-      title: state.statusText,
-      actions: [
-        if (state.isStreaming)
-          const SizedBox(
-            width: 10,
-            height: 10,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        IconButton(
-          icon: Icon(
-            state.expandedPanel == ExpandedPanel.corrected
-                ? Icons.close_fullscreen
-                : Icons.open_in_full,
-          ),
-          onPressed: () => state.toggleExpand(ExpandedPanel.corrected),
-        ),
-        IconButton(
-          icon: const Icon(Icons.copy),
-          onPressed: () =>
-              _copyToClipboard(context, state, state.correctedText),
-        ),
-      ],
-      child: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F2EA),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: SingleChildScrollView(
-              controller: widget.scrollController,
-              child: SelectableText(
-                state.correctedText,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ),
-          ),
-          if (state.errorMessage != null)
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: _ErrorBanner(message: state.errorMessage!),
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _autoScroll() {
-    if (!widget.state.settings.autoScroll || !widget.state.isStreaming) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      widget.scrollController.jumpTo(
-        widget.scrollController.position.maxScrollExtent,
-      );
-    });
-  }
-}
-
-class _PanelShell extends StatelessWidget {
-  const _PanelShell({
-    required this.title,
-    required this.actions,
-    required this.child,
-  });
-
-  final String title;
-  final List<Widget> actions;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.all(6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Theme.of(context).dividerColor),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
-                ),
-              ),
-              ...actions,
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(child: child),
-        ],
-      ),
-    );
-  }
-}
-
-void _copyToClipboard(BuildContext context, AppState state, String text) {
-  Clipboard.setData(ClipboardData(text: text));
-  ScaffoldMessenger.of(context)
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(state.t('actions.copied')),
-        duration: const Duration(milliseconds: 1200),
-      ),
-    );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.wifi_off, color: Colors.white, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(message, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BottomBar extends StatelessWidget {
-  const _BottomBar({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          TextButton(
-            onPressed: () => _openHistory(context, state),
-            child: Text(state.t('history.title')),
-          ),
-          const Spacer(),
-          TextButton(
-            onPressed: () => _openReport(context, state),
-            child: Text(state.t('actions.report')),
           ),
         ],
       ),
@@ -586,22 +415,819 @@ class _BottomBar extends StatelessWidget {
       );
     }
   }
+}
 
-  void _openReport(BuildContext context, AppState state) {
-    final isMobile = MediaQuery.of(context).size.width < 900;
-    if (isMobile) {
-      showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        builder: (_) => _ReportSheet(state: state),
-      );
-    } else {
-      showDialog<void>(
-        context: context,
-        builder: (_) => Dialog(child: _ReportSheet(state: state)),
+class _FeedList extends StatelessWidget {
+  const _FeedList({required this.state, required this.controller});
+
+  final AppState state;
+  final ScrollController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasActive =
+        state.activeOriginal.isNotEmpty ||
+        state.isStreaming ||
+        state.correctedText.isNotEmpty;
+    final itemCount = state.history.length + (hasActive ? 1 : 0);
+
+    if (itemCount == 0) {
+      return ListView(
+        controller: controller,
+        padding: EdgeInsets.fromLTRB(
+          _sidePadding(context),
+          24,
+          _sidePadding(context),
+          24,
+        ),
+        children: [
+          _EmptyState(state: state),
+          if (state.errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: _InlineError(message: state.errorMessage!),
+            ),
+        ],
       );
     }
+
+    return ListView.builder(
+      controller: controller,
+      reverse: true,
+      padding: EdgeInsets.fromLTRB(
+        _sidePadding(context),
+        16,
+        _sidePadding(context),
+        16,
+      ),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        final showDivider = index < itemCount - 1;
+        if (hasActive && index == 0) {
+          return Column(
+            children: [
+              _ChatPair(
+                original: state.activeOriginal,
+                corrected: state.correctedText,
+                isStreaming: state.isStreaming,
+                errorMessage: state.errorMessage,
+                timestamp: state.activeTimestamp,
+                feedbackChoice: state.activeFeedback,
+                onFeedbackChange: state.toggleActiveFeedback,
+                onReport: () => _openReportSheet(context, state),
+                reportLabel: state.t('actions.reportProblem'),
+                onCopyOriginal: state.activeOriginal.isNotEmpty
+                    ? (anchor) =>
+                          _copyToClipboard(anchor, state, state.activeOriginal)
+                    : null,
+                onCopyCorrected:
+                    state.correctedText.isNotEmpty || state.errorMessage != null
+                    ? (anchor) => _copyToClipboard(
+                        anchor,
+                        state,
+                        state.correctedText.isNotEmpty
+                            ? state.correctedText
+                            : (state.errorMessage ?? ''),
+                      )
+                    : null,
+                onRetry: state.errorMessage != null ? state.retry : null,
+                retryLabel: state.t('actions.retry'),
+                wasCanceled: state.wasCanceled,
+                stoppedLabel: state.t('actions.stopped'),
+                showFeedback: !state.isStreaming,
+              ),
+              if (showDivider)
+                _ChatDivider(color: Theme.of(context).dividerColor),
+            ],
+          );
+        }
+        final item = state.history[index - (hasActive ? 1 : 0)];
+        return Column(
+          children: [
+            _ChatPair(
+              original: item.original,
+              corrected: item.corrected,
+              timestamp: item.timestamp,
+              stoppedLabel: state.t('actions.stopped'),
+              showFeedback: true,
+              feedbackChoice: state.feedbackForItem(item),
+              onFeedbackChange: (choice) {
+                state.toggleHistoryFeedback(item.id, choice);
+              },
+              onReport: () => _openReportSheet(context, state),
+              reportLabel: state.t('actions.reportProblem'),
+              onCopyOriginal: (anchor) =>
+                  _copyToClipboard(anchor, state, item.original),
+              onCopyCorrected: (anchor) =>
+                  _copyToClipboard(anchor, state, item.corrected),
+            ),
+            if (showDivider)
+              _ChatDivider(color: Theme.of(context).dividerColor),
+          ],
+        );
+      },
+    );
   }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final muted = isDark ? Colors.grey.shade400 : _mutedLight;
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            state.t('empty.title'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            state.t('empty.body'),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatPair extends StatelessWidget {
+  const _ChatPair({
+    required this.original,
+    required this.corrected,
+    this.isStreaming = false,
+    this.errorMessage,
+    this.wasCanceled = false,
+    this.stoppedLabel,
+    this.showFeedback = false,
+    this.feedbackChoice = FeedbackChoice.none,
+    this.onFeedbackChange,
+    this.onReport,
+    this.reportLabel,
+    this.timestamp,
+    this.onCopyOriginal,
+    this.onCopyCorrected,
+    this.onRetry,
+    this.retryLabel,
+  });
+
+  final String original;
+  final String corrected;
+  final bool isStreaming;
+  final String? errorMessage;
+  final bool wasCanceled;
+  final String? stoppedLabel;
+  final bool showFeedback;
+  final FeedbackChoice feedbackChoice;
+  final void Function(FeedbackChoice choice)? onFeedbackChange;
+  final VoidCallback? onReport;
+  final String? reportLabel;
+  final DateTime? timestamp;
+  final void Function(BuildContext)? onCopyOriginal;
+  final void Function(BuildContext)? onCopyCorrected;
+  final VoidCallback? onRetry;
+  final String? retryLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final showAssistant =
+        corrected.isNotEmpty ||
+        isStreaming ||
+        errorMessage != null ||
+        wasCanceled;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _MessageBubble(
+            text: original,
+            isUser: true,
+            timestamp: timestamp,
+            onCopy: onCopyOriginal,
+          ),
+          if (showAssistant) ...[
+            const SizedBox(height: 12),
+            _MessageBubble(
+              text: corrected.isNotEmpty ? corrected : (errorMessage ?? ''),
+              isUser: false,
+              isStreaming: isStreaming,
+              isError: errorMessage != null,
+              wasCanceled: wasCanceled,
+              stoppedLabel: stoppedLabel,
+              showFeedback: showFeedback,
+              feedbackChoice: feedbackChoice,
+              onFeedbackChange: onFeedbackChange,
+              onReport: onReport,
+              reportLabel: reportLabel,
+              timestamp: timestamp,
+              onCopy: onCopyCorrected,
+              onRetry: errorMessage != null ? onRetry : null,
+              retryLabel: retryLabel,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatDivider extends StatelessWidget {
+  const _ChatDivider({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Divider(
+        height: 1,
+        thickness: 1,
+        color: color.withValues(alpha: 0.35),
+        indent: 80,
+        endIndent: 80,
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({
+    required this.text,
+    required this.isUser,
+    this.isStreaming = false,
+    this.isError = false,
+    this.wasCanceled = false,
+    this.stoppedLabel,
+    this.showFeedback = false,
+    this.feedbackChoice = FeedbackChoice.none,
+    this.onFeedbackChange,
+    this.onReport,
+    this.reportLabel,
+    this.timestamp,
+    this.onCopy,
+    this.onRetry,
+    this.retryLabel,
+  });
+
+  final String text;
+  final bool isUser;
+  final bool isStreaming;
+  final bool isError;
+  final bool wasCanceled;
+  final String? stoppedLabel;
+  final bool showFeedback;
+  final FeedbackChoice feedbackChoice;
+  final void Function(FeedbackChoice choice)? onFeedbackChange;
+  final VoidCallback? onReport;
+  final String? reportLabel;
+  final DateTime? timestamp;
+  final void Function(BuildContext)? onCopy;
+  final VoidCallback? onRetry;
+  final String? retryLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bubbleColor = isError
+        ? Theme.of(context).colorScheme.errorContainer
+        : isUser
+        ? (isDark ? _originalDark : _originalLight)
+        : (isDark ? _correctedDark : _correctedLight);
+    final textColor = isError
+        ? Theme.of(context).colorScheme.onErrorContainer
+        : null;
+    final metaColor = isDark ? Colors.grey.shade400 : _mutedLight;
+    final showTyping = isStreaming && text.isEmpty && !isError;
+    final displayText = text.isNotEmpty ? text : '';
+
+    final showTimestamp = timestamp != null && isUser;
+    final showFeedbackRow = !isUser && !isStreaming && showFeedback;
+    final showUp = feedbackChoice != FeedbackChoice.down;
+    final showDown = feedbackChoice != FeedbackChoice.up;
+    final isUpSelected = feedbackChoice == FeedbackChoice.up;
+    final isDownSelected = feedbackChoice == FeedbackChoice.down;
+    final showMetaRow = showTimestamp || onCopy != null || showFeedbackRow;
+
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Column(
+          crossAxisAlignment: isUser
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Theme.of(context).dividerColor.withValues(alpha: 0.6),
+                ),
+              ),
+              child: showTyping
+                  ? _TypingIndicator(color: metaColor)
+                  : SelectableText(
+                      displayText,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        height: 1.5,
+                        color: textColor,
+                      ),
+                    ),
+            ),
+            if (showMetaRow)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (showTimestamp)
+                      Text(
+                        _formatTimestamp(timestamp!),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: metaColor),
+                      ),
+                    if (showTimestamp && onCopy != null)
+                      const SizedBox(width: 6),
+                    if (onCopy != null)
+                      Builder(
+                        builder: (iconContext) => IconButton(
+                          onPressed: () => onCopy!(iconContext),
+                          icon: _CopyGlyph(color: metaColor),
+                          tooltip: 'Copy',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          iconSize: 16,
+                          color: metaColor,
+                        ),
+                      ),
+                    if (showFeedbackRow) ...[
+                      if (onCopy != null || showTimestamp)
+                        const SizedBox(width: 6),
+                      if (showUp)
+                        IconButton(
+                          onPressed: onFeedbackChange == null
+                              ? null
+                              : () => onFeedbackChange!(FeedbackChoice.up),
+                          icon: Icon(
+                            isUpSelected
+                                ? Icons.thumb_up_alt
+                                : Icons.thumb_up_alt_outlined,
+                          ),
+                          iconSize: 18,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          color: isUpSelected
+                              ? Theme.of(context).colorScheme.primary
+                              : metaColor,
+                        ),
+                      if (showDown)
+                        IconButton(
+                          onPressed: onFeedbackChange == null
+                              ? null
+                              : () => onFeedbackChange!(FeedbackChoice.down),
+                          icon: Icon(
+                            isDownSelected
+                                ? Icons.thumb_down_alt
+                                : Icons.thumb_down_alt_outlined,
+                          ),
+                          iconSize: 18,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          color: isDownSelected
+                              ? Theme.of(context).colorScheme.primary
+                              : metaColor,
+                        ),
+                      if (onReport != null) ...[
+                        const SizedBox(width: 6),
+                        TextButton(
+                          onPressed: onReport,
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            minimumSize: const Size(0, 28),
+                          ),
+                          child: Text(
+                            reportLabel ?? '',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: metaColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+            if (isError && onRetry != null)
+              Align(
+                alignment: isUser
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: Text(retryLabel ?? 'Retry'),
+                ),
+              ),
+            if (wasCanceled && !isStreaming)
+              Align(
+                alignment: isUser
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    stoppedLabel ?? 'Stopped',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: metaColor,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator({required this.color});
+
+  final Color color;
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _CopyToast extends StatelessWidget {
+  const _CopyToast({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final background = isDark ? const Color(0xFF2A2E2B) : Colors.white;
+    final border = isDark ? const Color(0xFF3B403C) : const Color(0xFFE0DAD0);
+    final textColor = isDark ? Colors.white : const Color(0xFF2D2D2D);
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Text(
+          message,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: textColor,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CopyGlyph extends StatelessWidget {
+  const _CopyGlyph({required this.color});
+
+  final Color color;
+
+  static const String _svg = '''
+<svg viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="24" height="24" fill="white"></rect>
+      <rect x="8.2" y="8.2" width="12.8" height="12.8" rx="4" fill="black"></rect>
+    </mask>
+  </defs>
+  <rect x="4" y="4" width="11" height="11" rx="3.8" mask="url(#cut)"></rect>
+  <rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3.8"></rect>
+</svg>
+''';
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()..rotateY(math.pi),
+      child: SvgPicture.string(
+        _svg,
+        width: 19,
+        height: 19,
+        colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+      ),
+    );
+  }
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final List<Animation<double>> _dotAnimations;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+    _dotAnimations = List.generate(3, (index) {
+      final start = index * 0.2;
+      final end = start + 0.6;
+      return CurvedAnimation(
+        parent: _controller,
+        curve: Interval(start, end, curve: Curves.easeInOut),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(3, (index) {
+        return FadeTransition(
+          opacity: _dotAnimations[index],
+          child: Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: widget.color,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _Composer extends StatelessWidget {
+  const _Composer({
+    required this.state,
+    required this.controller,
+    required this.focusNode,
+    this.onIntentionalBlur,
+  });
+
+  final AppState state;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final VoidCallback? onIntentionalBlur;
+
+  @override
+  Widget build(BuildContext context) {
+    final canSend = controller.text.trim().isNotEmpty;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        _sidePadding(context),
+        0,
+        _sidePadding(context),
+        12,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Focus(
+              onKeyEvent: (_, event) {
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.escape) {
+                  onIntentionalBlur?.call();
+                  focusNode.unfocus();
+                  return KeyEventResult.handled;
+                }
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.enter &&
+                    !HardwareKeyboard.instance.isShiftPressed) {
+                  if (canSend) {
+                    state.submit();
+                  }
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                autofocus: true,
+                minLines: 1,
+                maxLines: 6,
+                onChanged: state.updateOriginalText,
+                decoration: InputDecoration(
+                  hintText: state.t('input.placeholder'),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            height: 48,
+            width: 48,
+            child: state.isStreaming
+                ? OutlinedButton(
+                    onPressed: state.stopStreaming,
+                    style: OutlinedButton.styleFrom(
+                      shape: const CircleBorder(),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Icon(Icons.stop_rounded),
+                  )
+                : ElevatedButton(
+                    onPressed: canSend ? state.submit : null,
+                    style: ElevatedButton.styleFrom(
+                      shape: const CircleBorder(),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Icon(Icons.arrow_upward),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FooterActions extends StatelessWidget {
+  const _FooterActions({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = state.statusText;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final muted = isDark ? Colors.grey.shade400 : _mutedLight;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        _sidePadding(context),
+        0,
+        _sidePadding(context),
+        12,
+      ),
+      child: Row(
+        children: [
+          if (status.isNotEmpty)
+            Text(
+              status,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: muted),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+void _copyToClipboard(BuildContext context, AppState state, String text) {
+  Clipboard.setData(ClipboardData(text: text));
+  _showCopyToast(context, state.t('actions.copied'));
+}
+
+void _openReportSheet(BuildContext context, AppState state) {
+  final isMobile = MediaQuery.of(context).size.width < 900;
+  if (isMobile) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => _ReportSheet(state: state),
+    );
+  } else {
+    showDialog<void>(
+      context: context,
+      builder: (_) => Dialog(child: _ReportSheet(state: state)),
+    );
+  }
+}
+
+String _formatTimestamp(DateTime timestamp) {
+  final local = timestamp.toLocal();
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+void _showCopyToast(BuildContext context, String message) {
+  final overlay = Overlay.of(context);
+  final renderBox = context.findRenderObject() as RenderBox?;
+  final overlayBox = overlay.context.findRenderObject() as RenderBox?;
+  if (renderBox == null || overlayBox == null) {
+    return;
+  }
+
+  final target = renderBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+  const double toastWidth = 72;
+  const double toastHeight = 28;
+  const double toastPadding = 8;
+  const double toastGap = 6;
+  final left = math.max(
+    toastPadding,
+    math.min(
+      target.dx + renderBox.size.width / 2 - toastWidth / 2,
+      overlayBox.size.width - toastWidth - toastPadding,
+    ),
+  );
+  final top = math.max(
+    toastPadding,
+    math.min(
+      target.dy - toastHeight - toastGap,
+      overlayBox.size.height - toastHeight - toastPadding,
+    ),
+  );
+
+  final entry = OverlayEntry(
+    builder: (context) => Positioned(
+      left: left,
+      top: top,
+      child: _CopyToast(message: message),
+    ),
+  );
+  overlay.insert(entry);
+  Future<void>.delayed(const Duration(milliseconds: 900), entry.remove);
 }
 
 class _SettingsSheet extends StatelessWidget {
@@ -642,70 +1268,135 @@ class _SettingsSheet extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           TextButton(
-            onPressed: state.clearHistory,
+            onPressed: () => _confirmClearHistory(context, state),
             child: Text(state.t('settings.clearHistory')),
           ),
         ],
       ),
     );
   }
+
+  Future<void> _confirmClearHistory(
+    BuildContext context,
+    AppState state,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(state.t('settings.clearHistoryTitle')),
+        content: Text(state.t('settings.clearHistoryBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(state.t('actions.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(state.t('actions.clear')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      await state.clearHistory();
+    }
+  }
 }
 
-class _ReportSheet extends StatelessWidget {
+class _ReportSheet extends StatefulWidget {
   const _ReportSheet({required this.state});
 
   final AppState state;
 
   @override
+  State<_ReportSheet> createState() => _ReportSheetState();
+}
+
+class _ReportSheetState extends State<_ReportSheet> {
+  final TextEditingController _detailsController = TextEditingController();
+
+  @override
+  void dispose() {
+    _detailsController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final requestId = state.requestId?.isNotEmpty ?? false
-        ? state.requestId!
-        : state.t('report.notAvailable');
-    final hasEmail = state.config.reportEmail.isNotEmpty;
-    final hasTelegram = state.config.reportTelegramUrl.isNotEmpty;
+    final requestId = widget.state.requestId?.isNotEmpty ?? false
+        ? widget.state.requestId!
+        : widget.state.t('report.notAvailable');
+    final hasEmail = widget.state.config.reportEmail.isNotEmpty;
+    final hasTelegram = widget.state.config.reportTelegramUrl.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            state.t('report.title'),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(state.t('report.body')),
-          const SizedBox(height: 12),
-          SelectableText(
-            state.t('report.requestId', vars: {'requestId': requestId}),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: hasEmail ? () => _launchEmail(context) : null,
-                icon: const Icon(Icons.email_outlined),
-                label: Text(state.t('report.email')),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.state.t('report.title'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(widget.state.t('report.body')),
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    widget.state.t(
+                      'report.requestId',
+                      vars: {'requestId': requestId},
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _detailsController,
+                    minLines: 2,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      labelText: widget.state.t('report.detailsLabel'),
+                      hintText: widget.state.t('report.detailsHint'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: hasEmail
+                            ? () => _launchEmail(context)
+                            : null,
+                        icon: const Icon(Icons.email_outlined),
+                        label: Text(widget.state.t('report.email')),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: hasTelegram
+                            ? () => _launchTelegram(context)
+                            : null,
+                        icon: const Icon(Icons.send_outlined),
+                        label: Text(widget.state.t('report.telegram')),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      child: Text(widget.state.t('actions.close')),
+                    ),
+                  ),
+                ],
               ),
-              OutlinedButton.icon(
-                onPressed: hasTelegram ? () => _launchTelegram(context) : null,
-                icon: const Icon(Icons.send_outlined),
-                label: Text(state.t('report.telegram')),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              child: Text(state.t('actions.close')),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -716,26 +1407,27 @@ class _ReportSheet extends StatelessWidget {
   }
 
   Future<void> _launchTelegram(BuildContext context) async {
-    final uri = Uri.parse(state.config.reportTelegramUrl);
+    final uri = Uri.parse(widget.state.config.reportTelegramUrl);
     await _launchExternal(context, uri);
   }
 
   Uri _buildEmailUri() {
-    final requestId = state.requestId?.isNotEmpty ?? false
-        ? state.requestId!
-        : state.t('report.notAvailable');
+    final requestId = widget.state.requestId?.isNotEmpty ?? false
+        ? widget.state.requestId!
+        : widget.state.t('report.notAvailable');
     final timestamp = DateTime.now().toIso8601String();
     final backend =
-        (state.modelBackend != null && state.modelBackend!.isNotEmpty)
-        ? state.modelBackend!
-        : (state.config.baseUrl.isNotEmpty
-              ? state.config.baseUrl
-              : state.t('report.unknown'));
-    final subject = state.t(
+        (widget.state.modelBackend != null &&
+            widget.state.modelBackend!.isNotEmpty)
+        ? widget.state.modelBackend!
+        : (widget.state.config.baseUrl.isNotEmpty
+              ? widget.state.config.baseUrl
+              : widget.state.t('report.unknown'));
+    final subject = widget.state.t(
       'report.emailSubject',
-      vars: {'appName': state.config.appName},
+      vars: {'appName': widget.state.config.appName},
     );
-    final body = state.t(
+    var body = widget.state.t(
       'report.emailBody',
       vars: {
         'requestId': requestId,
@@ -743,10 +1435,14 @@ class _ReportSheet extends StatelessWidget {
         'backend': backend,
       },
     );
+    final details = _detailsController.text.trim();
+    if (details.isNotEmpty) {
+      body = '$body\n\n${widget.state.t('report.detailsLabel')}: $details';
+    }
 
     return Uri(
       scheme: 'mailto',
-      path: state.config.reportEmail,
+      path: widget.state.config.reportEmail,
       queryParameters: {'subject': subject, 'body': body},
     );
   }
@@ -754,9 +1450,9 @@ class _ReportSheet extends StatelessWidget {
   Future<void> _launchExternal(BuildContext context, Uri uri) async {
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(state.t('errors.openLink'))));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(widget.state.t('errors.openLink'))),
+      );
     }
   }
 }

@@ -30,6 +30,7 @@ AppState _buildState({
   String baseUrl = 'http://localhost:3000',
   BackendClient? backend,
   Settings settings = const Settings.defaults(),
+  List<HistoryItem> history = const [],
 }) {
   return AppState(
     config: AppConfig(
@@ -42,7 +43,7 @@ AppState _buildState({
     settingsStore: SettingsStore(),
     historyStore: HistoryStore(),
     settings: settings,
-    history: const [],
+    history: history,
     localizer: Localizer(),
     backend: backend,
   );
@@ -61,82 +62,26 @@ void main() {
         });
   });
 
-  testWidgets('Corrected panel uses selectable text', (
-    WidgetTester tester,
-  ) async {
-    final state = _buildState()..correctedText = 'fixed';
+  testWidgets('Feed renders history card', (WidgetTester tester) async {
+    final history = [
+      HistoryItem(
+        id: '1',
+        original: 'orig',
+        corrected: 'fixed',
+        timestamp: DateTime.now(),
+        latencyMs: 0,
+        requestId: 'rid',
+      ),
+    ];
+    final state = _buildState(history: history);
 
     await tester.pumpWidget(MyApp(appState: state));
 
-    expect(find.byType(SelectableText), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('orig'), findsOneWidget);
+    expect(find.text('fixed'), findsOneWidget);
   });
 
-  testWidgets('Expanded corrected panel hides original input', (
-    WidgetTester tester,
-  ) async {
-    final state = _buildState()
-      ..correctedText = 'fixed'
-      ..expandedPanel = ExpandedPanel.corrected;
-
-    await tester.pumpWidget(MyApp(appState: state));
-
-    expect(find.byType(SelectableText), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
-  });
-
-  testWidgets('Error banner renders when errorMessage is set', (
-    WidgetTester tester,
-  ) async {
-    final state = _buildState()..errorMessage = 'Server error';
-
-    await tester.pumpWidget(MyApp(appState: state));
-
-    expect(find.text('Server error'), findsOneWidget);
-  });
-
-  testWidgets('Layout toggle updates layout mode', (WidgetTester tester) async {
-    final state = _buildState();
-
-    await tester.pumpWidget(MyApp(appState: state));
-    expect(state.settings.layoutMode, LayoutMode.horizontal);
-
-    await tester.tap(find.byIcon(Icons.view_agenda));
-    await tester.pump();
-
-    expect(state.settings.layoutMode, LayoutMode.vertical);
-  });
-
-  testWidgets('Expand/collapse hides the other panel', (
-    WidgetTester tester,
-  ) async {
-    final state = _buildState();
-
-    await tester.pumpWidget(MyApp(appState: state));
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.byType(SelectableText), findsOneWidget);
-
-    await tester.tap(find.byIcon(Icons.open_in_full).first);
-    await tester.pump();
-
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.byType(SelectableText), findsNothing);
-  });
-
-  testWidgets('Offline view renders when backend url missing', (
-    WidgetTester tester,
-  ) async {
-    final state = _buildState(baseUrl: '');
-
-    await tester.pumpWidget(MyApp(appState: state));
-    await tester.enterText(find.byType(TextField), 'hello');
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pump();
-
-    expect(find.byIcon(Icons.wifi_off), findsOneWidget);
-  });
-
-  testWidgets('Widget flow streams corrected text', (
+  testWidgets('Send button streams corrected text', (
     WidgetTester tester,
   ) async {
     final stream = Stream<SseEvent>.fromIterable([
@@ -151,20 +96,111 @@ void main() {
 
     await tester.pumpWidget(MyApp(appState: state));
     await tester.enterText(find.byType(TextField), 'hello');
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byIcon(Icons.arrow_upward));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 10));
 
     expect(find.text('hello'), findsWidgets);
-    expect(state.correctedText, 'hello');
+  });
+
+  testWidgets('Offline view shows error', (WidgetTester tester) async {
+    final state = _buildState(baseUrl: '');
+
+    await tester.pumpWidget(MyApp(appState: state));
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pump();
+
+    expect(state.errorMessage?.isNotEmpty ?? false, isTrue);
   });
 
   testWidgets('Copy button shows feedback', (WidgetTester tester) async {
-    final state = _buildState()..correctedText = 'copied';
+    final history = [
+      HistoryItem(
+        id: '1',
+        original: 'orig',
+        corrected: 'copied',
+        timestamp: DateTime.now(),
+        latencyMs: 0,
+        requestId: 'rid',
+      ),
+    ];
+    final state = _buildState(history: history);
 
     await tester.pumpWidget(MyApp(appState: state));
-    await tester.tap(find.byIcon(Icons.copy).first);
+    await tester.tap(find.byTooltip('Copy').first);
+    await tester.pump();
+    expect(find.text('actions.copied'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1000));
+  });
+
+  testWidgets('Stop button cancels stream and shows stopped label', (
+    WidgetTester tester,
+  ) async {
+    final state = _buildState()
+      ..isStreaming = true
+      ..activeOriginal = 'hello';
+
+    await tester.pumpWidget(MyApp(appState: state));
+
+    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.stop_rounded));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(state.wasCanceled, isTrue);
+  });
+
+  testWidgets('Feedback toggle hides opposite icon', (
+    WidgetTester tester,
+  ) async {
+    final history = [
+      HistoryItem(
+        id: '1',
+        original: 'orig',
+        corrected: 'fixed',
+        timestamp: DateTime.now(),
+        latencyMs: 0,
+        requestId: 'rid',
+      ),
+    ];
+    final state = _buildState(history: history);
+
+    await tester.pumpWidget(MyApp(appState: state));
+    expect(find.byIcon(Icons.thumb_up_alt_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.thumb_down_alt_outlined), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.thumb_up_alt_outlined));
     await tester.pump();
 
-    expect(find.text('actions.copied'), findsOneWidget);
+    expect(find.byIcon(Icons.thumb_up_alt), findsOneWidget);
+    expect(find.byIcon(Icons.thumb_down_alt_outlined), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.thumb_up_alt));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.thumb_up_alt_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.thumb_down_alt_outlined), findsOneWidget);
+  });
+
+  testWidgets('Report problem opens report sheet', (WidgetTester tester) async {
+    final history = [
+      HistoryItem(
+        id: '1',
+        original: 'orig',
+        corrected: 'fixed',
+        timestamp: DateTime.now(),
+        latencyMs: 0,
+        requestId: 'rid',
+      ),
+    ];
+    final state = _buildState(history: history);
+
+    await tester.pumpWidget(MyApp(appState: state));
+    await tester.tap(find.text('actions.reportProblem'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('report.title'), findsOneWidget);
   });
 }
