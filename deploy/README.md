@@ -34,10 +34,25 @@ sudo chmod 600 /home/gec-tt-bot/.ssh/authorized_keys
    - `systemctl restart gec-tt-backend`
    - `systemctl reload nginx`
    - `nginx -t`
+   - `systemctl enable wg-quick@wg0`
+   - `systemctl disable wg-quick@wg0`
+   - `systemctl start wg-quick@wg0`
+   - `systemctl stop wg-quick@wg0`
+   - `systemctl enable gec-tt-vpn-policy`
+   - `systemctl disable gec-tt-vpn-policy`
+   - `systemctl start gec-tt-vpn-policy`
+   - `systemctl stop gec-tt-vpn-policy`
+   - `systemctl daemon-reload`
+   - `apt-get update`
+   - `apt-get install`
+   - `install`
+   - `tee`
+   - `ip`
+   - `nft`
 
 Example sudoers entry (edit with `visudo`):
 ```
-gec-tt-bot ALL=NOPASSWD:/bin/systemctl restart gec-tt-backend,/bin/systemctl reload nginx,/usr/sbin/nginx -t,/bin/systemctl daemon-reload,/bin/systemctl enable gec-tt-backend
+gec-tt-bot ALL=NOPASSWD:/bin/systemctl restart gec-tt-backend,/bin/systemctl reload nginx,/usr/sbin/nginx -t,/bin/systemctl daemon-reload,/bin/systemctl enable gec-tt-backend,/bin/systemctl enable wg-quick@wg0,/bin/systemctl disable wg-quick@wg0,/bin/systemctl start wg-quick@wg0,/bin/systemctl stop wg-quick@wg0,/bin/systemctl enable gec-tt-vpn-policy,/bin/systemctl disable gec-tt-vpn-policy,/bin/systemctl start gec-tt-vpn-policy,/bin/systemctl stop gec-tt-vpn-policy,/usr/bin/apt-get update,/usr/bin/apt-get install,/usr/bin/install,/usr/bin/tee,/usr/sbin/ip,/usr/sbin/nft
 ```
 
 ## GitHub Secrets
@@ -47,6 +62,7 @@ Set these in repo settings:
 - `DEV_SSH_KEY`: private key contents
 - `DEV_SSH_PORT`: `22` (or your custom port)
 - `GEMINI_API_KEYS`: comma-separated Gemini API keys (for demo proxy)
+- `WG_CONFIG`: WireGuard config content for the VPS (multi-line)
 
 ## Nginx routing
 The init workflow injects a snippet into the existing nginx site file to serve:
