@@ -20,3 +20,4 @@ dist/
 
 commands.txt
 todo
+deploy/vpn_manual_steps.sh
