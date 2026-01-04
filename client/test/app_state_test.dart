@@ -95,6 +95,7 @@ void main() {
         reportEmail: '',
         reportTelegramUrl: '',
         appIdentifiers: {},
+        buildSha: '',
       ),
       settingsStore: SettingsStore(),
       historyStore: historyStore ?? HistoryStore(),

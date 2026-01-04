@@ -39,6 +39,7 @@ AppState _buildState({
       reportEmail: '',
       reportTelegramUrl: '',
       appIdentifiers: const {},
+      buildSha: '',
     ),
     settingsStore: SettingsStore(),
     historyStore: HistoryStore(),

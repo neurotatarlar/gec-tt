@@ -3,6 +3,7 @@
   "appName": "Yaz.Tatar!",
   "reportEmail": "support@example.com",
   "reportTelegramUrl": "https://t.me/example",
+  "buildSha": "dev",
   "appIdentifiers": {
     "android": "com.example.yaz_tatar",
     "ios": "com.example.yaz_tatar",

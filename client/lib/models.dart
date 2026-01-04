@@ -11,6 +11,7 @@ class AppConfig {
     required this.reportEmail,
     required this.reportTelegramUrl,
     required this.appIdentifiers,
+    required this.buildSha,
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) {
@@ -30,6 +31,7 @@ class AppConfig {
       reportEmail: (json['reportEmail'] ?? '').toString(),
       reportTelegramUrl: (json['reportTelegramUrl'] ?? '').toString(),
       appIdentifiers: identifiers,
+      buildSha: (json['buildSha'] ?? '').toString(),
     );
   }
   final String baseUrl;
@@ -37,6 +39,7 @@ class AppConfig {
   final String reportEmail;
   final String reportTelegramUrl;
   final Map<String, String> appIdentifiers;
+  final String buildSha;
 }
 
 class Settings {

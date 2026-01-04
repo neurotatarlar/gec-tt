@@ -24,6 +24,7 @@ void main() {
         reportEmail: 'test@example.com',
         reportTelegramUrl: 'https://t.me/example',
         appIdentifiers: {},
+        buildSha: '',
       ),
       settingsStore: SettingsStore(),
       historyStore: HistoryStore(),

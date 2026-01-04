@@ -31,6 +31,13 @@ double _sidePadding(BuildContext context) {
   return (width - 900) / 2;
 }
 
+String _shortSha(String sha) {
+  if (sha.isEmpty) {
+    return '';
+  }
+  return sha.length <= 8 ? sha : sha.substring(0, 8);
+}
+
 class _FocusComposerIntent extends Intent {
   const _FocusComposerIntent();
 }
@@ -1271,6 +1278,13 @@ class _SettingsSheet extends StatelessWidget {
             onPressed: () => _confirmClearHistory(context, state),
             child: Text(state.t('settings.clearHistory')),
           ),
+          if (state.config.buildSha.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Build: ${_shortSha(state.config.buildSha)}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ),
     );

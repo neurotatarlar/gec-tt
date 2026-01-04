@@ -34,7 +34,7 @@ class Settings:
         default_factory=lambda: _get_int("MAX_CONCURRENT_STREAMS", 3)
     )
     heartbeat_ms: int = field(default_factory=lambda: _get_int("HEARTBEAT_MS", 20000))
-    model_backend: str = field(default_factory=lambda: _get("MODEL_BACKEND", "mock"))
+    model_backend: str = field(default_factory=lambda: _get("MODEL_BACKEND", "gemini"))
     prompt_version: str = field(default_factory=lambda: _get("PROMPT_VERSION", "v1"))
     cache_ttl_ms: int = field(default_factory=lambda: _get_int("CACHE_TTL_MS", 60000))
     gemini_model: str = field(

@@ -58,13 +58,14 @@ class LocalAdapter(ModelAdapter):
 
 
 def build_adapter(settings: Settings) -> ModelAdapter:
-    if settings.model_backend == "gemini":
+    backend = settings.model_backend.strip().lower()
+    if backend == "gemini":
         from .gemini import GeminiAdapter
 
         return GeminiAdapter(settings.gemini_api_keys, settings.gemini_model)
-    if settings.model_backend == "prompt":
+    if backend == "prompt":
         return PromptAdapter(settings.prompt_version)
-    if settings.model_backend == "local":
+    if backend == "local":
         return LocalAdapter()
     return MockAdapter()
 
