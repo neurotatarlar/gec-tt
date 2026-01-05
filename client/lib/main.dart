@@ -202,7 +202,13 @@ class _HomePageState extends State<HomePage> {
             body: SafeArea(
               child: Column(
                 children: [
-                  _TopBar(state: state),
+                  _TopBar(
+                    state: state,
+                    onLogoTap: () {
+                      _scrollToBottom();
+                      _focusComposer();
+                    },
+                  ),
                   Expanded(
                     child: _FeedList(state: state, controller: _feedController),
                   ),
@@ -343,16 +349,13 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.state});
+  const _TopBar({required this.state, this.onLogoTap});
 
   final AppState state;
+  final VoidCallback? onLogoTap;
 
   @override
   Widget build(BuildContext context) {
-    final titleStyle = Theme.of(
-      context,
-    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600);
-
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: _sidePadding(context),
@@ -360,11 +363,12 @@ class _TopBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(state.config.appName, style: titleStyle),
+          _LogoButton(title: state.config.appName, onTap: onLogoTap),
           const Spacer(),
           DropdownButton<String>(
             value: state.settings.language,
             underline: const SizedBox.shrink(),
+            focusColor: Colors.transparent,
             items: [
               DropdownMenuItem(
                 value: 'en',
@@ -382,6 +386,7 @@ class _TopBar extends StatelessWidget {
             onChanged: (value) {
               if (value == null) return;
               state.setLanguage(value);
+              FocusManager.instance.primaryFocus?.unfocus();
             },
           ),
           const SizedBox(width: 8),
@@ -580,6 +585,60 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+class _LogoButton extends StatelessWidget {
+  const _LogoButton({required this.title, this.onTap});
+
+  final String title;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final textStyle = theme.textTheme.titleLarge?.copyWith(
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.2,
+    );
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: scheme.primary,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.primary.withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                'Ә',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(title, style: textStyle),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InlineError extends StatelessWidget {
   const _InlineError({required this.message});
 
@@ -636,8 +695,8 @@ class _ChatPair extends StatelessWidget {
   final VoidCallback? onReport;
   final String? reportLabel;
   final DateTime? timestamp;
-  final void Function(BuildContext)? onCopyOriginal;
-  final void Function(BuildContext)? onCopyCorrected;
+  final Future<void> Function(BuildContext)? onCopyOriginal;
+  final Future<void> Function(BuildContext)? onCopyCorrected;
   final VoidCallback? onRetry;
   final String? retryLabel;
 
@@ -737,7 +796,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onReport;
   final String? reportLabel;
   final DateTime? timestamp;
-  final void Function(BuildContext)? onCopy;
+  final Future<void> Function(BuildContext)? onCopy;
   final VoidCallback? onRetry;
   final String? retryLabel;
 
@@ -810,8 +869,13 @@ class _MessageBubble extends StatelessWidget {
                     if (onCopy != null)
                       Builder(
                         builder: (iconContext) => IconButton(
-                          onPressed: () => onCopy!(iconContext),
-                          icon: _CopyGlyph(color: metaColor),
+                          onPressed: () async => onCopy!(iconContext),
+                          icon: _CopyGlyph(
+                            color: metaColor,
+                            background: Theme.of(
+                              context,
+                            ).scaffoldBackgroundColor,
+                          ),
                           tooltip: 'Copy',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(
@@ -971,9 +1035,10 @@ class _CopyToast extends StatelessWidget {
 }
 
 class _CopyGlyph extends StatelessWidget {
-  const _CopyGlyph({required this.color});
+  const _CopyGlyph({required this.color, required this.background});
 
   final Color color;
+  final Color background;
 
   @override
   Widget build(BuildContext context) {
@@ -982,16 +1047,17 @@ class _CopyGlyph extends StatelessWidget {
       transform: Matrix4.identity()..rotateY(math.pi),
       child: CustomPaint(
         size: const Size(19, 19),
-        painter: _CopyGlyphPainter(color),
+        painter: _CopyGlyphPainter(color, background),
       ),
     );
   }
 }
 
 class _CopyGlyphPainter extends CustomPainter {
-  _CopyGlyphPainter(this.color);
+  _CopyGlyphPainter(this.color, this.background);
 
   final Color color;
+  final Color background;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1001,6 +1067,9 @@ class _CopyGlyphPainter extends CustomPainter {
       ..strokeWidth = 1.8
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
+    final fill = Paint()
+      ..color = background
+      ..style = PaintingStyle.fill;
     const backRect = Rect.fromLTWH(2.2, 2.2, 10.6, 10.6);
     const frontRect = Rect.fromLTWH(6.2, 6.2, 10.6, 10.6);
     final back = RRect.fromRectAndRadius(backRect, const Radius.circular(3.6));
@@ -1010,12 +1079,13 @@ class _CopyGlyphPainter extends CustomPainter {
     );
     canvas
       ..drawRRect(back, stroke)
+      ..drawRRect(front, fill)
       ..drawRRect(front, stroke);
   }
 
   @override
   bool shouldRepaint(covariant _CopyGlyphPainter oldDelegate) {
-    return oldDelegate.color != color;
+    return oldDelegate.color != color || oldDelegate.background != background;
   }
 }
 
@@ -1193,9 +1263,23 @@ class _FooterActions extends StatelessWidget {
   }
 }
 
-void _copyToClipboard(BuildContext context, AppState state, String text) {
-  Clipboard.setData(ClipboardData(text: text));
-  _showCopyToast(context, state.t('actions.copied'));
+Future<void> _copyToClipboard(
+  BuildContext context,
+  AppState state,
+  String text,
+) async {
+  try {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) {
+      return;
+    }
+    _showCopyToast(context, state.t('actions.copied'));
+  } catch (_) {
+    if (!context.mounted) {
+      return;
+    }
+    _showCopyToast(context, state.t('errors.copyFailed'));
+  }
 }
 
 Future<void> _openReportSheet(BuildContext context, AppState state) async {

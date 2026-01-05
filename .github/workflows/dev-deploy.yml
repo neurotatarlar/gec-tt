@@ -230,7 +230,17 @@ jobs:
               GEMINI_API_KEYS="$GEMINI_API_KEYS" \
               /tmp/gec-tt-deploy/deploy/dev_deploy.sh
             if [ "$HAS_WHEEL" = true ]; then
-              timeout 10 curl -fsS http://127.0.0.1:3000/health >/dev/null
+              PORT=$(grep -E '^PORT=' /opt/gec_tt/.env | tail -n1 | cut -d= -f2 || true)
+              if [ -z "$PORT" ]; then
+                PORT=3000
+              fi
+              for _ in $(seq 1 10); do
+                if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null; then
+                  break
+                fi
+                sleep 2
+              done
+              curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null
             fi
             if [ "$HAS_WEB" = true ]; then
               test -f /var/www/gec_tt/index.html

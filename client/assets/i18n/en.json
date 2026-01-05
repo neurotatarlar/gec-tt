@@ -4,6 +4,7 @@
   "language.ru": "Russian",
   "actions.report": "Report error",
   "actions.copied": "Copied",
+  "errors.copyFailed": "Copy failed",
   "actions.retry": "Retry",
   "actions.stopped": "Stopped",
   "actions.reportProblem": "Report problem",

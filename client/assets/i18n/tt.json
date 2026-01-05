@@ -4,6 +4,7 @@
   "language.ru": "Рус",
   "actions.report": "Хата турында хәбәр итү",
   "actions.copied": "Күчерелде",
+  "errors.copyFailed": "Күчереп булмады",
   "actions.retry": "Кабатлау",
   "actions.stopped": "Туктатылды",
   "actions.reportProblem": "Проблеманы хәбәр ит",
