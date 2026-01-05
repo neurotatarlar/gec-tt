@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'app_state.dart';
+import 'sheets/history_sheet.dart' deferred as history_sheet;
+import 'sheets/report_sheet.dart' deferred as report_sheet;
+import 'sheets/settings_sheet.dart' deferred as settings_sheet;
 
 const _seedColor = Color(0xFF4C6A5C);
 const _surfaceLight = Color(0xFFFBFAF7);
@@ -28,13 +30,6 @@ double _sidePadding(BuildContext context) {
     return 20;
   }
   return (width - 900) / 2;
-}
-
-String _shortSha(String sha) {
-  if (sha.isEmpty) {
-    return '';
-  }
-  return sha.length <= 8 ? sha : sha.substring(0, 8);
 }
 
 class _FocusComposerIntent extends Intent {
@@ -396,31 +391,43 @@ class _TopBar extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () => showModalBottomSheet<void>(
-              context: context,
-              showDragHandle: true,
-              builder: (_) => _SettingsSheet(state: state),
-            ),
+            onPressed: () => _openSettings(context, state),
           ),
         ],
       ),
     );
   }
 
-  void _openHistory(BuildContext context, AppState state) {
+  Future<void> _openHistory(BuildContext context, AppState state) async {
+    await history_sheet.loadLibrary();
+    if (!context.mounted) {
+      return;
+    }
     final isMobile = MediaQuery.of(context).size.width < 900;
     if (isMobile) {
-      showModalBottomSheet<void>(
+      await showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
-        builder: (_) => _HistorySheet(state: state),
+        builder: (_) => history_sheet.HistorySheet(state: state),
       );
     } else {
-      showDialog<void>(
+      await showDialog<void>(
         context: context,
-        builder: (_) => Dialog(child: _HistorySheet(state: state)),
+        builder: (_) => Dialog(child: history_sheet.HistorySheet(state: state)),
       );
     }
+  }
+
+  Future<void> _openSettings(BuildContext context, AppState state) async {
+    await settings_sheet.loadLibrary();
+    if (!context.mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => settings_sheet.SettingsSheet(state: state),
+    );
   }
 }
 
@@ -1191,18 +1198,22 @@ void _copyToClipboard(BuildContext context, AppState state, String text) {
   _showCopyToast(context, state.t('actions.copied'));
 }
 
-void _openReportSheet(BuildContext context, AppState state) {
+Future<void> _openReportSheet(BuildContext context, AppState state) async {
+  await report_sheet.loadLibrary();
+  if (!context.mounted) {
+    return;
+  }
   final isMobile = MediaQuery.of(context).size.width < 900;
   if (isMobile) {
-    showModalBottomSheet<void>(
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (_) => _ReportSheet(state: state),
+      builder: (_) => report_sheet.ReportSheet(state: state),
     );
   } else {
-    showDialog<void>(
+    await showDialog<void>(
       context: context,
-      builder: (_) => Dialog(child: _ReportSheet(state: state)),
+      builder: (_) => Dialog(child: report_sheet.ReportSheet(state: state)),
     );
   }
 }
@@ -1251,357 +1262,4 @@ void _showCopyToast(BuildContext context, String message) {
   );
   overlay.insert(entry);
   Future<void>.delayed(const Duration(milliseconds: 900), entry.remove);
-}
-
-class _SettingsSheet extends StatelessWidget {
-  const _SettingsSheet({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            state.t('settings.title'),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 12),
-          _ThemeSelector(state: state),
-          const SizedBox(height: 12),
-          _FontSizeSelector(state: state),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            value: state.settings.autoScroll,
-            title: Text(state.t('settings.autoScroll')),
-            onChanged: (value) => state.updateSettings(
-              state.settings.copyWith(autoScroll: value),
-            ),
-          ),
-          SwitchListTile(
-            value: state.settings.saveHistory,
-            title: Text(state.t('settings.saveHistory')),
-            onChanged: (value) => state.updateSettings(
-              state.settings.copyWith(saveHistory: value),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: () => _confirmClearHistory(context, state),
-            child: Text(state.t('settings.clearHistory')),
-          ),
-          if (state.config.buildSha.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Build: ${_shortSha(state.config.buildSha)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Future<void> _confirmClearHistory(
-    BuildContext context,
-    AppState state,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(state.t('settings.clearHistoryTitle')),
-        content: Text(state.t('settings.clearHistoryBody')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(state.t('actions.cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(state.t('actions.clear')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) {
-      await state.clearHistory();
-    }
-  }
-}
-
-class _ReportSheet extends StatefulWidget {
-  const _ReportSheet({required this.state});
-
-  final AppState state;
-
-  @override
-  State<_ReportSheet> createState() => _ReportSheetState();
-}
-
-class _ReportSheetState extends State<_ReportSheet> {
-  final TextEditingController _detailsController = TextEditingController();
-
-  @override
-  void dispose() {
-    _detailsController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final requestId = widget.state.requestId?.isNotEmpty ?? false
-        ? widget.state.requestId!
-        : widget.state.t('report.notAvailable');
-    final hasEmail = widget.state.config.reportEmail.isNotEmpty;
-    final hasTelegram = widget.state.config.reportTelegramUrl.isNotEmpty;
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.state.t('report.title'),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(widget.state.t('report.body')),
-                  const SizedBox(height: 12),
-                  SelectableText(
-                    widget.state.t(
-                      'report.requestId',
-                      vars: {'requestId': requestId},
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _detailsController,
-                    minLines: 2,
-                    maxLines: 5,
-                    decoration: InputDecoration(
-                      labelText: widget.state.t('report.detailsLabel'),
-                      hintText: widget.state.t('report.detailsHint'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: hasEmail
-                            ? () => _launchEmail(context)
-                            : null,
-                        icon: const Icon(Icons.email_outlined),
-                        label: Text(widget.state.t('report.email')),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: hasTelegram
-                            ? () => _launchTelegram(context)
-                            : null,
-                        icon: const Icon(Icons.send_outlined),
-                        label: Text(widget.state.t('report.telegram')),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      child: Text(widget.state.t('actions.close')),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _launchEmail(BuildContext context) async {
-    final uri = _buildEmailUri();
-    await _launchExternal(context, uri);
-  }
-
-  Future<void> _launchTelegram(BuildContext context) async {
-    final uri = Uri.parse(widget.state.config.reportTelegramUrl);
-    await _launchExternal(context, uri);
-  }
-
-  Uri _buildEmailUri() {
-    final requestId = widget.state.requestId?.isNotEmpty ?? false
-        ? widget.state.requestId!
-        : widget.state.t('report.notAvailable');
-    final timestamp = DateTime.now().toIso8601String();
-    final backend =
-        (widget.state.modelBackend != null &&
-            widget.state.modelBackend!.isNotEmpty)
-        ? widget.state.modelBackend!
-        : (widget.state.config.baseUrl.isNotEmpty
-              ? widget.state.config.baseUrl
-              : widget.state.t('report.unknown'));
-    final subject = widget.state.t(
-      'report.emailSubject',
-      vars: {'appName': widget.state.config.appName},
-    );
-    var body = widget.state.t(
-      'report.emailBody',
-      vars: {
-        'requestId': requestId,
-        'timestamp': timestamp,
-        'backend': backend,
-      },
-    );
-    final details = _detailsController.text.trim();
-    if (details.isNotEmpty) {
-      body = '$body\n\n${widget.state.t('report.detailsLabel')}: $details';
-    }
-
-    return Uri(
-      scheme: 'mailto',
-      path: widget.state.config.reportEmail,
-      queryParameters: {'subject': subject, 'body': body},
-    );
-  }
-
-  Future<void> _launchExternal(BuildContext context, Uri uri) async {
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.state.t('errors.openLink'))),
-      );
-    }
-  }
-}
-
-class _ThemeSelector extends StatelessWidget {
-  const _ThemeSelector({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(state.t('settings.theme')),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              label: Text(state.t('settings.light')),
-              selected: state.settings.themeMode == ThemeMode.light,
-              onSelected: (_) => state.updateSettings(
-                state.settings.copyWith(themeMode: ThemeMode.light),
-              ),
-            ),
-            ChoiceChip(
-              label: Text(state.t('settings.dark')),
-              selected: state.settings.themeMode == ThemeMode.dark,
-              onSelected: (_) => state.updateSettings(
-                state.settings.copyWith(themeMode: ThemeMode.dark),
-              ),
-            ),
-            ChoiceChip(
-              label: Text(state.t('settings.system')),
-              selected: state.settings.themeMode == ThemeMode.system,
-              onSelected: (_) => state.updateSettings(
-                state.settings.copyWith(themeMode: ThemeMode.system),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _FontSizeSelector extends StatelessWidget {
-  const _FontSizeSelector({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(state.t('settings.fontSize')),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              label: Text(state.t('settings.small')),
-              selected: state.settings.fontScale == 0.9,
-              onSelected: (_) =>
-                  state.updateSettings(state.settings.copyWith(fontScale: 0.9)),
-            ),
-            ChoiceChip(
-              label: Text(state.t('settings.medium')),
-              selected: state.settings.fontScale == 1.0,
-              onSelected: (_) =>
-                  state.updateSettings(state.settings.copyWith(fontScale: 1)),
-            ),
-            ChoiceChip(
-              label: Text(state.t('settings.large')),
-              selected: state.settings.fontScale == 1.1,
-              onSelected: (_) =>
-                  state.updateSettings(state.settings.copyWith(fontScale: 1.1)),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _HistorySheet extends StatelessWidget {
-  const _HistorySheet({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    if (state.history.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(state.t('history.empty')),
-      );
-    }
-    return ListView.separated(
-      shrinkWrap: true,
-      itemCount: state.history.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final item = state.history[index];
-        return ListTile(
-          title: Text(
-            item.original,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(item.timestamp.toLocal().toString()),
-          onTap: () {
-            state.loadHistoryItem(item);
-            Navigator.of(context).maybePop();
-          },
-        );
-      },
-    );
-  }
 }
