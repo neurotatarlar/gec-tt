@@ -46,6 +46,7 @@ AppState _buildState({
     settings: settings,
     history: history,
     localizer: Localizer(),
+    autoHydrate: false,
     backend: backend,
   );
 }

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -36,8 +35,6 @@ class AppState:
         self.settings = settings
         self.adapter: ModelAdapter = build_adapter(settings)
         logger = logging.getLogger("backend")
-        logger.info("MODEL_BACKEND env: %r", os.getenv("MODEL_BACKEND"))
-        logger.info("Settings model_backend: %s", settings.model_backend)
         logger.info("Model adapter: %s", self.adapter.name)
         if hasattr(self.adapter, "_model"):
             logger.info("Gemini model: %s", self.adapter._model)

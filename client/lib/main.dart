@@ -1,9 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -122,22 +121,20 @@ class MyApp extends StatelessWidget {
       ),
     );
 
-    final textTheme = GoogleFonts.manropeTextTheme(base.textTheme);
-    final headingTheme = GoogleFonts.frauncesTextTheme(textTheme);
-
-    return base.copyWith(
-      textTheme: textTheme.copyWith(
-        displayLarge: headingTheme.displayLarge,
-        displayMedium: headingTheme.displayMedium,
-        displaySmall: headingTheme.displaySmall,
-        headlineLarge: headingTheme.headlineLarge,
-        headlineMedium: headingTheme.headlineMedium,
-        headlineSmall: headingTheme.headlineSmall,
-        titleLarge: headingTheme.titleLarge,
-        titleMedium: headingTheme.titleMedium,
-        titleSmall: headingTheme.titleSmall,
-      ),
+    final textTheme = base.textTheme.apply(
+      fontFamily: kIsWeb ? 'system-ui' : null,
+      fontFamilyFallback: const [
+        'Noto Sans',
+        'Noto Sans UI',
+        'Segoe UI',
+        'Roboto',
+        'Helvetica Neue',
+        'Arial',
+        'sans-serif',
+      ],
     );
+
+    return base.copyWith(textTheme: textTheme);
   }
 }
 
@@ -161,6 +158,9 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _feedController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<AppState>().hydrate();
+      }
       _scrollToBottom();
       _fillHistoryToViewport();
       _focusComposer();
@@ -968,31 +968,47 @@ class _CopyGlyph extends StatelessWidget {
 
   final Color color;
 
-  static const String _svg = '''
-<svg viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <defs>
-    <mask id="cut" maskUnits="userSpaceOnUse">
-      <rect x="0" y="0" width="24" height="24" fill="white"></rect>
-      <rect x="8.2" y="8.2" width="12.8" height="12.8" rx="4" fill="black"></rect>
-    </mask>
-  </defs>
-  <rect x="4" y="4" width="11" height="11" rx="3.8" mask="url(#cut)"></rect>
-  <rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3.8"></rect>
-</svg>
-''';
-
   @override
   Widget build(BuildContext context) {
     return Transform(
       alignment: Alignment.center,
       transform: Matrix4.identity()..rotateY(math.pi),
-      child: SvgPicture.string(
-        _svg,
-        width: 19,
-        height: 19,
-        colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+      child: CustomPaint(
+        size: const Size(19, 19),
+        painter: _CopyGlyphPainter(color),
       ),
     );
+  }
+}
+
+class _CopyGlyphPainter extends CustomPainter {
+  _CopyGlyphPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    const backRect = Rect.fromLTWH(2.2, 2.2, 10.6, 10.6);
+    const frontRect = Rect.fromLTWH(6.2, 6.2, 10.6, 10.6);
+    final back = RRect.fromRectAndRadius(backRect, const Radius.circular(3.6));
+    final front = RRect.fromRectAndRadius(
+      frontRect,
+      const Radius.circular(3.6),
+    );
+    canvas
+      ..drawRRect(back, stroke)
+      ..drawRRect(front, stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CopyGlyphPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 

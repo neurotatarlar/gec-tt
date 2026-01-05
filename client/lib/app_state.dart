@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -19,6 +20,7 @@ class AppState extends ChangeNotifier {
     required this.settings,
     required this.history,
     required Localizer localizer,
+    this.autoHydrate = true,
     BackendClient? backend,
     bool? hasMoreHistory,
     int? loadedHistoryCount,
@@ -32,6 +34,7 @@ class AppState extends ChangeNotifier {
   final HistoryStore historyStore;
   final Localizer _localizer;
   final BackendClient _backend;
+  final bool autoHydrate;
 
   Settings settings;
   List<HistoryItem> history;
@@ -54,6 +57,8 @@ class AppState extends ChangeNotifier {
   DateTime? activeTimestamp;
   int _loadedPersisted;
   final Map<String, FeedbackChoice> _historyFeedback = {};
+  bool _didHydrate = false;
+  bool _isHydrating = false;
 
   static const int historyPageSize = 6;
 
@@ -64,6 +69,28 @@ class AppState extends ChangeNotifier {
     await _localizer.load(lang);
     settings = settings.copyWith(language: lang);
     await settingsStore.save(settings);
+    notifyListeners();
+  }
+
+  Future<void> hydrate() async {
+    if (!autoHydrate || _didHydrate || _isHydrating) {
+      return;
+    }
+    _isHydrating = true;
+    try {
+      final loaded = await settingsStore.load();
+      final shouldLoadLocale =
+          _localizer.strings.isEmpty || settings.language != loaded.language;
+      settings = loaded;
+      if (shouldLoadLocale) {
+        await _localizer.load(loaded.language);
+      }
+    } catch (_) {
+      // Keep defaults on startup failure.
+    } finally {
+      _didHydrate = true;
+      _isHydrating = false;
+    }
     notifyListeners();
   }
 
@@ -279,9 +306,14 @@ class AppState extends ChangeNotifier {
       requestId: requestId ?? '',
     );
     history.insert(0, item);
+    if (history.length > HistoryStore.maxItems) {
+      history.removeRange(HistoryStore.maxItems, history.length);
+    }
     if (settings.saveHistory) {
       await historyStore.add(item);
-      _loadedPersisted += 1;
+      final total = await historyStore.count();
+      _loadedPersisted = math.min(_loadedPersisted + 1, total);
+      hasMoreHistory = history.length < total;
     }
     activeOriginal = '';
     activeTimestamp = null;
@@ -308,24 +340,17 @@ Future<AppState> bootstrapAppState() async {
   final config = await AppConfigLoader.load();
   final settingsStore = SettingsStore();
   final historyStore = HistoryStore();
-  final settings = await settingsStore.load();
-  final history = await historyStore.loadPage(
-    offset: 0,
-    limit: AppState.historyPageSize,
-  );
-  final totalHistory = await historyStore.count();
-  final hasMoreHistory = history.length < totalHistory;
+  const settings = Settings.defaults();
   final localizer = Localizer();
-  await localizer.load(settings.language);
 
   return AppState(
     config: config,
     settingsStore: settingsStore,
     historyStore: historyStore,
     settings: settings,
-    history: history,
-    hasMoreHistory: hasMoreHistory,
-    loadedHistoryCount: history.length,
+    history: [],
+    hasMoreHistory: true,
+    loadedHistoryCount: 0,
     localizer: localizer,
   );
 }

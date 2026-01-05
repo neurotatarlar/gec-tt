@@ -14,8 +14,10 @@ client-deps:
 dev: client-deps
 	@bash -c 'set -euo pipefail; \
 	trap "kill 0" EXIT INT TERM; \
+	WASM_FLAG=""; \
+	if [ "$(WEB_WASM)" = "true" ]; then WASM_FLAG="--wasm"; fi; \
 	$(PYTHON) -m uvicorn backend.main:app --reload --port $${PORT:-3000} & \
-	cd client && $(FLUTTER) run -d web-server --web-hostname 127.0.0.1 --web-port 8080'
+	cd client && $(FLUTTER) run -d web-server --web-hostname 127.0.0.1 --web-port 8080 $$WASM_FLAG'
 
 test-backend:
 	$(PYTHON) -m pytest
@@ -74,3 +76,4 @@ docker-down:
 
 sse-test:
 	curl -N -X POST http://localhost:3000/v1/correct/stream -H "Content-Type: application/json" -d '{"text":"сина рәхмәт","lang":"tt","client":{"platform":"cli","version":"demo"}}'
+WEB_WASM ?= false

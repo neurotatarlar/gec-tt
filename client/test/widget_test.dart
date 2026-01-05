@@ -31,6 +31,7 @@ void main() {
       settings: const Settings.defaults(),
       history: const [],
       localizer: localizer,
+      autoHydrate: false,
     );
 
     await tester.pumpWidget(MyApp(appState: appState));

@@ -96,10 +96,17 @@ jobs:
       - name: Build web bundle
         if: steps.changes.outputs.client == 'true' || github.event_name == 'workflow_dispatch'
         run: |
+          sudo apt-get update
+          sudo apt-get install -y brotli
+          WASM_FLAG=""
+          if [ "${WEB_WASM:-false}" = "true" ]; then
+            WASM_FLAG="--wasm"
+          fi
           python - <<'PY'
           import os
           import json
           from pathlib import Path
+
           path = Path("client/assets/config.json")
           data = json.loads(path.read_text())
           data["baseUrl"] = "/app/api"
@@ -108,7 +115,20 @@ jobs:
           PY
           cd client
           flutter pub get
-          flutter build web --base-href /app/
+          flutter build web --base-href /app/ $WASM_FLAG --tree-shake-icons
+          if [ "${WEB_WASM:-false}" = "true" ]; then
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("build/web/index.html")
+          text = path.read_text()
+          needle = '<link rel="preload" href="flutter_bootstrap.js" as="script">'
+          wasm = '<link rel="preload" href="main.dart.wasm" as="fetch" type="application/wasm" crossorigin>'
+          if wasm not in text:
+              text = text.replace(needle, f"{needle}\n  {wasm}")
+              path.write_text(text)
+          PY
+          fi
+          bash ../deploy/precompress_web.sh build/web
           tar -czf ../web.tar.gz -C build/web .
 
       - name: Upload deploy script
@@ -143,6 +163,17 @@ jobs:
           source: "web.tar.gz"
           target: "/tmp/gec-tt-deploy"
 
+      - name: Upload nginx snippets
+        if: steps.changes.outputs.client == 'true' || github.event_name == 'workflow_dispatch'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_HOST }}
+          username: ${{ secrets.DEV_USER }}
+          key: ${{ secrets.DEV_SSH_KEY }}
+          port: ${{ secrets.DEV_SSH_PORT }}
+          source: "deploy/nginx/gec-tt-app.conf,deploy/nginx/gec-tt-brotli.conf"
+          target: "/tmp/gec-tt-deploy"
+
       - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -164,6 +195,8 @@ jobs:
             APP_USER=gec-tt-bot \
               APP_DIR=/opt/gec_tt \
               WEB_DIR=/var/www/gec_tt \
+              NGINX_SNIPPET_SRC=/tmp/gec-tt-deploy/deploy/nginx/gec-tt-app.conf \
+              NGINX_BROTLI_SRC=/tmp/gec-tt-deploy/deploy/nginx/gec-tt-brotli.conf \
               WHEEL_PATH="$WHEEL_PATH" \
               WEB_ARCHIVE=/tmp/gec-tt-deploy/web.tar.gz \
               APP_VERSION="$APP_VERSION" \

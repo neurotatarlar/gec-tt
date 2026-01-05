@@ -25,12 +25,32 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Yaz.Tatar!">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <meta name="theme-color" content="#F1EEE7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121412" media="(prefers-color-scheme: dark)">
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 
   <title>Yaz.Tatar!</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Preload critical assets for faster startup -->
+  <link rel="preload" href="flutter_bootstrap.js" as="script">
+  <!-- wasm preload is injected during build when enabled -->
+
+  <style>
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      background: #F1EEE7;
+    }
+    @media (prefers-color-scheme: dark) {
+      html, body {
+        background: #121412;
+      }
+    }
+  </style>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

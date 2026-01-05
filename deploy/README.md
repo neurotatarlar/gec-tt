@@ -70,3 +70,8 @@ The init workflow injects a snippet into the existing nginx site file to serve:
 - `/app/api/` -> `127.0.0.1:3000`
 
 If you update nginx manually, use the snippet in `deploy/nginx/gec-tt-app.conf`.
+For brotli, `deploy/nginx/gec-tt-brotli.conf` is installed only when the
+brotli module is available; otherwise the init script creates an empty file.
+
+One-liner manual refresh:
+`sudo install -m 644 deploy/nginx/gec-tt-app.conf /etc/nginx/snippets/gec-tt-app.conf && sudo nginx -t && sudo systemctl reload nginx`

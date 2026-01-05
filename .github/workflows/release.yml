@@ -22,11 +22,33 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Install web compression tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y brotli
       - name: Build web
         run: |
           cd client
+          WASM_FLAG=""
+          if [ "${WEB_WASM:-false}" = "true" ]; then
+            WASM_FLAG="--wasm"
+          fi
           flutter pub get
-          flutter build web --base-href /app/
+          flutter build web --base-href /app/ $WASM_FLAG --tree-shake-icons
+          if [ "${WEB_WASM:-false}" = "true" ]; then
+            python - <<'PY'
+from pathlib import Path
+
+path = Path("build/web/index.html")
+text = path.read_text()
+needle = '<link rel="preload" href="flutter_bootstrap.js" as="script">'
+wasm = '<link rel="preload" href="main.dart.wasm" as="fetch" type="application/wasm" crossorigin>'
+if wasm not in text:
+    text = text.replace(needle, f"{needle}\n  {wasm}")
+    path.write_text(text)
+PY
+          fi
+          bash ../deploy/precompress_web.sh build/web
           tar -czf ../gec-tt-web.tar.gz -C build/web .
       - name: Upload web artifact
         uses: actions/upload-artifact@v4

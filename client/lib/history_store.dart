@@ -1,16 +1,109 @@
-import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
 
 class HistoryStore {
-  static const _boxName = 'history';
+  static const int maxItems = 200;
+  static const int maxBytes = 1000000;
+  static const _historyKey = 'history_items';
   bool _initialized = false;
+  bool _useMemoryFallback = false;
+  final List<Map<String, dynamic>> _memory = [];
 
   Future<void> _ensureInit() async {
     if (_initialized) return;
-    await Hive.initFlutter();
-    await Hive.openBox<Map<dynamic, dynamic>>(_boxName);
+    try {
+      await SharedPreferences.getInstance();
+    } catch (_) {
+      _useMemoryFallback = true;
+    }
     _initialized = true;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadValues({
+    bool pruneIfNeeded = false,
+  }) async {
+    await _ensureInit();
+    if (_useMemoryFallback) {
+      final values = List<Map<String, dynamic>>.from(_memory);
+      if (pruneIfNeeded) {
+        final trimmed = _trimValues(values);
+        if (!identical(trimmed, values)) {
+          _memory
+            ..clear()
+            ..addAll(trimmed);
+          return trimmed;
+        }
+      }
+      return values;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_historyKey);
+    if (raw == null || raw.isEmpty) {
+      return [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) {
+        return [];
+      }
+      final values = decoded
+          .whereType<Map<dynamic, dynamic>>()
+          .map(
+            (entry) => Map<String, dynamic>.fromEntries(
+              entry.entries.map(
+                (item) => MapEntry(item.key.toString(), item.value),
+              ),
+            ),
+          )
+          .toList(growable: false);
+      if (pruneIfNeeded) {
+        final trimmed = _trimValues(values);
+        if (!identical(trimmed, values)) {
+          await _saveValues(trimmed);
+          return trimmed;
+        }
+      }
+      return values;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _saveValues(List<Map<String, dynamic>> values) async {
+    await _ensureInit();
+    if (_useMemoryFallback) {
+      _memory
+        ..clear()
+        ..addAll(values);
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_historyKey, jsonEncode(values));
+  }
+
+  List<Map<String, dynamic>> _trimValues(List<Map<String, dynamic>> values) {
+    var trimmed = values;
+    var changed = false;
+    if (trimmed.length > maxItems) {
+      trimmed = trimmed.sublist(trimmed.length - maxItems);
+      changed = true;
+    }
+    if (maxBytes > 0) {
+      var size = _encodedSize(trimmed);
+      while (size > maxBytes && trimmed.length > 1) {
+        trimmed = trimmed.sublist(1);
+        changed = true;
+        size = _encodedSize(trimmed);
+      }
+    }
+    return changed ? List<Map<String, dynamic>>.from(trimmed) : values;
+  }
+
+  int _encodedSize(List<Map<String, dynamic>> values) {
+    return utf8.encode(jsonEncode(values)).length;
   }
 
   Future<List<HistoryItem>> loadAll() async {
@@ -21,14 +114,27 @@ class HistoryStore {
 
   Future<void> add(HistoryItem item) async {
     await _ensureInit();
-    final box = Hive.box<Map<dynamic, dynamic>>(_boxName);
-    await box.add(item.toJson());
+    if (_useMemoryFallback) {
+      final next = List<Map<String, dynamic>>.from(_memory)..add(item.toJson());
+      final trimmed = _trimValues(next);
+      _memory
+        ..clear()
+        ..addAll(trimmed);
+      return;
+    }
+    final values = await _loadValues(pruneIfNeeded: true);
+    final next = List<Map<String, dynamic>>.from(values)..add(item.toJson());
+    final trimmed = _trimValues(next);
+    await _saveValues(trimmed);
   }
 
   Future<int> count() async {
     await _ensureInit();
-    final box = Hive.box<Map<dynamic, dynamic>>(_boxName);
-    return box.length;
+    if (_useMemoryFallback) {
+      return _memory.length;
+    }
+    final values = await _loadValues(pruneIfNeeded: true);
+    return values.length;
   }
 
   Future<List<HistoryItem>> loadPage({
@@ -39,17 +145,7 @@ class HistoryStore {
     if (limit <= 0) {
       return [];
     }
-    final box = Hive.box<Map<dynamic, dynamic>>(_boxName);
-    final values = box.values
-        .whereType<Map<dynamic, dynamic>>()
-        .map(
-          (value) => Map<String, dynamic>.fromEntries(
-            value.entries.map(
-              (entry) => MapEntry(entry.key.toString(), entry.value),
-            ),
-          ),
-        )
-        .toList(growable: false);
+    final values = await _loadValues(pruneIfNeeded: true);
     final total = values.length;
     if (total == 0 || offset >= total) {
       return [];
@@ -62,7 +158,11 @@ class HistoryStore {
 
   Future<void> clear() async {
     await _ensureInit();
-    final box = Hive.box<Map<dynamic, dynamic>>(_boxName);
-    await box.clear();
+    if (_useMemoryFallback) {
+      _memory.clear();
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_historyKey);
   }
 }

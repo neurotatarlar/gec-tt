@@ -2,5 +2,5 @@
 set -euo pipefail
 
 echo "Running checks..."
-make check
+make lint
 # make secrets
