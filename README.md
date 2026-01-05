@@ -98,6 +98,13 @@ See `.env.example` for tunables (ports, limits, backend adapter, heartbeat). `MO
 - Compose (prod-ish): `docker compose up -d`
 - Caddy reverse proxy included with buffering disabled for SSE; enable HTTPS/ACME by editing `Caddyfile` when deploying to a domain.
 
+## SEO plan (not implemented)
+- Keep the Flutter app at `/` (no extra steps for users).
+- Add static HTML pages at `/about`, `/faq`, `/privacy` with real text content.
+- Add meta tags (title/description/OG/Twitter) and JSON-LD schema in `client/web/index.html`.
+- Provide `sitemap.xml` + `robots.txt`, submit to Google Search Console.
+- Revisit once a domain + HTTPS is enabled.
+
 ## SSE troubleshooting
 - Ensure reverse proxy disables buffering and respects long-lived connections.
 - Heartbeats (`: ping`) every `HEARTBEAT_MS` help keep connections alive.
